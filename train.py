@@ -15,6 +15,7 @@ import logging
 import random
 import shutil
 import wandb
+from functools import partial
 
 
 logger = logging.getLogger(__name__)
@@ -33,10 +34,10 @@ python train.py --config config_few_rel.yaml --log_dir logs-few-rel
 
 '''
 
-# Define sweep config
+# If doing hyperparameter sweeping, define sweep config here
+
 sweep_configuration = {
     "method": "random",
-    "name": "sweep",
     "metric": {"goal": "maximize", "name": "eval_f1"},
     "parameters": {
         "num_train_rel_types": {"values": [20, 25, 30]},
@@ -44,12 +45,6 @@ sweep_configuration = {
         "lr_others": {"max": 1e-3, "min": 5e-5},
     },
 }
-
-# Initialize sweep by passing in config.
-# (Optional) Provide a name of the project.
-sweep_id = wandb.sweep(sweep=sweep_configuration, project="GLiREL")
-
-
 
 
 def get_unique_relations(data):
@@ -386,7 +381,17 @@ if __name__ == "__main__":
     assert not (args.wandb_log is True and args.wandb_sweep is True), "Cannot use both wandb logging and wandb sweep at the same time."
 
     if args.wandb_sweep:
-        # Start sweep job.
-        wandb.agent(sweep_id, function=main(args), count=4)
+        # get day and time as string
+        now = datetime.now()
+        dt_string = now.strftime("%d-%m-%Y--%H-%M-%S")
+        sweep_name = f"sweep-{dt_string}"
+        sweep_configuration["name"] = sweep_name
+
+
+        # Initialize sweep by passing in config
+        sweep_id = wandb.sweep(sweep=sweep_configuration, project="GLiREL")
+
+        # Start sweep job
+        wandb.agent(sweep_id, function=partial(main, args), count=10)
     else:
         main(args)
