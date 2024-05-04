@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from gliner.modules.span_rep import create_projection_layer, SpanMarkerV0, extract_elements
+from glirel.modules.span_rep import create_projection_layer, SpanMarkerV0, extract_elements
 import torch.nn.functional as F
 
 

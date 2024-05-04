@@ -6,9 +6,9 @@ from tqdm import tqdm
 from transformers import get_cosine_schedule_with_warmup
 
 # from model_nested import NerFilteredSemiCRF
-from gliner import GLiNER
-from gliner.modules.run_evaluation import sample_train_data
-from gliner.model import load_config_as_namespace
+from glirel import GLiREL
+from glirel.modules.run_evaluation import sample_train_data
+from glirel.model import load_config_as_namespace
 from datetime import datetime
 import json
 import logging
@@ -345,10 +345,10 @@ def main(args):
     # Load model
 
     if config.prev_path != "none":
-        model = GLiNER.from_pretrained(config.prev_path)
+        model = GLiREL.from_pretrained(config.prev_path)
         model.config = config
     else:
-        model = GLiNER(config)
+        model = GLiREL(config)
 
     if torch.cuda.is_available():
         model = model.to('cuda')

@@ -7,12 +7,12 @@ from typing import Dict, Optional, Union
 import torch
 import torch.nn.functional as F
 import yaml
-from gliner.modules.layers import LstmSeq2SeqEncoder
-from gliner.modules.base import InstructBase
-from gliner.modules.evaluator import Evaluator, greedy_search, RelEvaluator
-from gliner.modules.span_rep import SpanRepLayer
-from gliner.modules.rel_rep import RelRepLayer
-from gliner.modules.token_rep import TokenRepLayer
+from glirel.modules.layers import LstmSeq2SeqEncoder
+from glirel.modules.base import InstructBase
+from glirel.modules.evaluator import Evaluator, greedy_search, RelEvaluator
+from glirel.modules.span_rep import SpanRepLayer
+from glirel.modules.rel_rep import RelRepLayer
+from glirel.modules.token_rep import TokenRepLayer
 from torch import nn
 from torch.nn.utils.rnn import pad_sequence
 from huggingface_hub import PyTorchModelHubMixin, hf_hub_download
@@ -28,20 +28,20 @@ logging.basicConfig(level=logging.INFO,
 
 
 
-class GLiNER(InstructBase, PyTorchModelHubMixin):
+class GLiREL(InstructBase, PyTorchModelHubMixin):
     def __init__(self, config):
         super().__init__(config)
 
         self.config = config
 
-        # [ENT] token
-        self.entity_token = "<<ENT>>"
+        # [REL] token
+        self.rel_token = "<<REL>>"
         self.sep_token = "<<SEP>>"
 
         # usually a pretrained bidirectional transformer, returns first subtoken representation
         self.token_rep_layer = TokenRepLayer(model_name=config.model_name, fine_tune=config.fine_tune,
                                              subtoken_pooling=config.subtoken_pooling, hidden_size=config.hidden_size,
-                                             add_tokens=[self.entity_token, self.sep_token])
+                                             add_tokens=[self.rel_token, self.sep_token])
 
         # hierarchical representation of tokens (zaratiana et al, 2022)
         # https://arxiv.org/pdf/2203.14710.pdf
@@ -112,7 +112,7 @@ class GLiNER(InstructBase, PyTorchModelHubMixin):
             num_classes_all.append(len(all_types_i))
             # add enity types to prompt
             for entity_type in all_types_i:
-                entity_prompt.append(self.entity_token)  # [ENT] token
+                entity_prompt.append(self.rel_token)  # [REL] token
                 entity_prompt.append(entity_type)        # entity type
             entity_prompt.append(self.sep_token)         # [SEP] token
 
@@ -228,7 +228,7 @@ class GLiNER(InstructBase, PyTorchModelHubMixin):
 
         # add enity types to prompt
         for entity_type in all_types:
-            entity_prompt.append(self.entity_token)
+            entity_prompt.append(self.rel_token)
             entity_prompt.append(entity_type)
 
         entity_prompt.append(self.sep_token)
@@ -300,12 +300,12 @@ class GLiNER(InstructBase, PyTorchModelHubMixin):
             rels.append(rels_i)
         return rels
 
-    def predict_entities(self, text, labels, flat_ner=True, threshold=0.5, ner=None):
-        return self.batch_predict_entities([text], labels, flat_ner=flat_ner, threshold=threshold, ner=[ner])[0]
+    def predict_relations(self, text, labels, flat_ner=True, threshold=0.5, ner=None):
+        return self.batch_predict_relations([text], labels, flat_ner=flat_ner, threshold=threshold, ner=[ner])[0]
 
-    def batch_predict_entities(self, texts, labels, flat_ner=True, threshold=0.5, ner=None):
+    def batch_predict_relations(self, texts, labels, flat_ner=True, threshold=0.5, ner=None):
         """
-        Predict entities for a batch of texts.
+        Predict relations for a batch of texts.
         texts:  List of texts | List[str]
         labels: List of labels | List[str]
         ...
@@ -439,36 +439,8 @@ class GLiNER(InstructBase, PyTorchModelHubMixin):
         strict: bool = False,
         **model_kwargs,
     ):
-        # 1. Backwards compatibility: Use "gliner_base.pt" and "gliner_multi.pt" with all data
-        filenames = ["gliner_base.pt", "gliner_multi.pt"]
-        for filename in filenames:
-            model_file = Path(model_id) / filename
-            if not model_file.exists():
-                try:
-                    model_file = hf_hub_download(
-                        repo_id=model_id,
-                        filename=filename,
-                        revision=revision,
-                        cache_dir=cache_dir,
-                        force_download=force_download,
-                        proxies=proxies,
-                        resume_download=resume_download,
-                        token=token,
-                        local_files_only=local_files_only,
-                    )
-                except HfHubHTTPError:
-                    continue
-            dict_load = torch.load(model_file, map_location=torch.device(map_location))
-            config = dict_load["config"]
-            state_dict = dict_load["model_weights"]
-            config.model_name = "microsoft/deberta-v3-base" if filename == "gliner_base.pt" else "microsoft/mdeberta-v3-base"
-            model = cls(config)
-            model.load_state_dict(state_dict, strict=strict)
-            # Required to update flair's internals as well:
-            model.to(map_location)
-            return model
 
-        # 2. Newer format: Use "pytorch_model.bin" and "gliner_config.json"
+        # Use "pytorch_model.bin" and "glirel_config.json"
         model_file = Path(model_id) / "pytorch_model.bin"
         if not model_file.exists():
             model_file = hf_hub_download(
@@ -482,11 +454,11 @@ class GLiNER(InstructBase, PyTorchModelHubMixin):
                 token=token,
                 local_files_only=local_files_only,
             )
-        config_file = Path(model_id) / "gliner_config.json"
+        config_file = Path(model_id) / "glirel_config.json"
         if not config_file.exists():
             config_file = hf_hub_download(
                 repo_id=model_id,
-                filename="gliner_config.json",
+                filename="glirel_config.json",
                 revision=revision,
                 cache_dir=cache_dir,
                 force_download=force_download,
@@ -539,7 +511,7 @@ class GLiNER(InstructBase, PyTorchModelHubMixin):
         if config is not None:
             if isinstance(config, argparse.Namespace):
                 config = vars(config)
-            (save_directory / "gliner_config.json").write_text(json.dumps(config, indent=2))
+            (save_directory / "glirel_config.json").write_text(json.dumps(config, indent=2))
 
         # push to the Hub if required
         if push_to_hub:

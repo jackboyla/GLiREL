@@ -1,5 +1,5 @@
 import json
-from gliner.model import GLiNER
+from glirel.model import GLiREL
 
 import torch
 from tqdm import tqdm
@@ -8,7 +8,7 @@ from transformers import get_cosine_schedule_with_warmup
 from datasets import load_dataset
 import os
 from types import SimpleNamespace
-from gliner.modules.rel_rep import RelMarkerv0
+from glirel.modules.rel_rep import RelMarkerv0
 
 
 # read jsonl file from data
@@ -18,7 +18,7 @@ with open('../data/docred_expanded.jsonl', 'r') as file:
         data.append(json.loads(line))
 
 
-model = GLiNER.from_pretrained("urchade/gliner_small")
+model = GLiREL.from_pretrained("jackboyla/glirel_small")
 
 model.span_rep_layer = RelMarkerv0(model.config.hidden_size, max_width=12, dropout=0.4)
 
@@ -84,12 +84,11 @@ labels = [
 
 tokens = [tok.text for tok in doc]
 
-relations = model.predict_entities(tokens, labels, threshold=0.5, ner=ner)
+relations = model.predict_relations(tokens, labels, threshold=0.5, ner=ner)
 
 for rel in relations:
     print(f"{rel['head_text']} --> {rel['label']} --> {rel['tail_text']}")
 
-import ipdb;ipdb.set_trace()
 
 ## Train
 

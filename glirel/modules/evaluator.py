@@ -7,26 +7,26 @@ from seqeval.metrics.v1 import _prf_divide
 
 
 def extract_tp_actual_correct(y_true, y_pred):
-    entities_true = defaultdict(set)
-    entities_pred = defaultdict(set)
+    relations_true = defaultdict(set)
+    relations_pred = defaultdict(set)
 
 
     for type_name, head, tail, idx in y_true:
-        entities_true[type_name].add((head, tail, idx))
+        relations_true[type_name].add((head, tail, idx))
     for type_name, head, tail, idx in y_pred:
-        entities_pred[type_name].add((head, tail, idx))
+        relations_pred[type_name].add((head, tail, idx))
 
-    target_names = sorted(set(entities_true.keys()) | set(entities_pred.keys()))
+    target_names = sorted(set(relations_true.keys()) | set(relations_pred.keys()))
 
     tp_sum = np.array([], dtype=np.int32)
     pred_sum = np.array([], dtype=np.int32)
     true_sum = np.array([], dtype=np.int32)
     for type_name in target_names:
-        entities_true_type = entities_true.get(type_name, set())
-        entities_pred_type = entities_pred.get(type_name, set())
-        tp_sum = np.append(tp_sum, len(entities_true_type & entities_pred_type))
-        pred_sum = np.append(pred_sum, len(entities_pred_type))
-        true_sum = np.append(true_sum, len(entities_true_type))
+        relations_true_type = relations_true.get(type_name, set())
+        relations_pred_type = relations_pred.get(type_name, set())
+        tp_sum = np.append(tp_sum, len(relations_true_type & relations_pred_type))
+        pred_sum = np.append(pred_sum, len(relations_pred_type))
+        true_sum = np.append(true_sum, len(relations_true_type))
 
     return pred_sum, tp_sum, true_sum, target_names
 

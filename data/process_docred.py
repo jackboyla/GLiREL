@@ -13,7 +13,7 @@ and each group is treated as a single entity.
 We want to split that up so that each mention is a separate entity.
 This involves duplicating the relationships shared across the mentions of the same entity.
 
-Also getting the rest of the data in the right format for GLiNER training (ner, tokenized_text)
+Also getting the rest of the data in the right format for GLiREL training (ner, tokenized_text)
 
 '''
 

@@ -3,14 +3,14 @@ requires = ["setuptools>=61.0.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["gliner", "gliner.*"]
+include = ["glirel", "glirel.*"]
 
 [tool.setuptools.dynamic]
-version = {attr = "gliner.__version__"}
+version = {attr = "glirel.__version__"}
 
 [project]
-name = "gliner"
-description = "Generalist model for NER (Extract any entity types from texts)"
+name = "glirel"
+description = "Generalist model for Relation Extraction (Extract any relation types from texts)"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "Apache-2.0"}
@@ -25,13 +25,14 @@ keywords = [
     "transformers"
 ]
 authors = [
+    {name = "Jack Boylan"},
     {name = "Urchade Zaratiana"},
     {name = "Nadi Tomeh"},
     {name = "Pierre Holat"},
     {name = "Thierry Charnois"},
 ]
 maintainers = [
-    {name = "Urchade Zaratiana"},
+    {name = "Jack Boylan"},
 ]
 dependencies = [
     "torch",
@@ -44,4 +45,4 @@ dependencies = [
 dynamic = ["version"]
 
 [project.urls]
-Homepage = "https://github.com/urchade/GLiNER"
+Homepage = "https://github.com/jackboyla/GLiREL"

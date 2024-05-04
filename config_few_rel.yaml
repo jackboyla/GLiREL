@@ -10,7 +10,7 @@ eval_every: 1000
 
 # Model Configuration
 max_width: 12
-model_name: microsoft/deberta-v3-large # hugging face model
+model_name: microsoft/deberta-v3-small # hugging face model
 fine_tune: true
 subtoken_pooling: first
 hidden_size: 768
@@ -37,6 +37,6 @@ random_drop: false       # randomly drop relation types
 # max_neg_type_ratio: 1  # ratio of positive/negative types, 1 mean 50%/50%, 2 mean 33%/66%, 3 mean 25%/75% ...
 max_len: 384
 
-name: "large"
+name: "small"
 
 
