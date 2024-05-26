@@ -40,11 +40,20 @@ sweep_configuration = {
     "method": "random",
     "metric": {"goal": "maximize", "name": "eval_f1"},
     "parameters": {
-        "num_train_rel_types": {"values": [20, 25, 30]},
-        "num_unseen_rel_types": {"values": [5, 10, 15]},
+        "num_train_rel_types": {"values": [15, 20, 25, 30, 35, 40]},
+        "num_unseen_rel_types": {"values": [15]},
         "lr_others": {"max": 1e-3, "min": 5e-5},
     },
 }
+
+
+def create_parser():
+    parser = argparse.ArgumentParser(description="Zero-shot Relation Extraction")
+    parser.add_argument("--config", type=str, default="config.yaml", help="Path to config file")
+    parser.add_argument('--log_dir', type=str, default=None, help='Path to the log directory')
+    parser.add_argument("--wandb_log", action="store_true", help="Activate wandb logging")
+    parser.add_argument("--wandb_sweep", action="store_true", help="Activate wandb hyperparameter sweep")
+    return parser
 
 
 def get_unique_relations(data):
@@ -83,7 +92,10 @@ def split_data_by_relation_type(data, num_unseen_rel_types):
     original_num_unseen_rel_types = num_unseen_rel_types
 
     logger.info(f"Running dataset splitting...")
+    count = 0
     while not correct_num_unseen_relations_achieved:
+        seed = random.randint(0, 1000)
+        random.seed(seed)
         random.shuffle(unique_relations)
         test_relation_types = set(unique_relations[ : num_unseen_rel_types ])
         train_relation_types = set(unique_relations[ num_unseen_rel_types : ])
@@ -112,9 +124,12 @@ def split_data_by_relation_type(data, num_unseen_rel_types):
             num_unseen_rel_types = num_unseen_rel_types + 1 if (num_unseen_rel_types <  original_num_unseen_rel_types*2) else num_unseen_rel_types
         # logger.info('Incorrect number of unseen relation types. Retrying...')
 
+        count += 1
+
     if len(skipped_items) > 0:
         logger.info(f"Skipped items: {len(skipped_items)} because they have __BOTH__ train and test relation types")
     
+    logger.info(f"Split on seed {seed}")
     return train_data, test_data
 
     
@@ -122,7 +137,7 @@ def split_data_by_relation_type(data, num_unseen_rel_types):
 
 
 # train function
-def train(model, optimizer, train_data, eval_data=None, num_steps=1000, eval_every=100, top_k=1, log_dir=None,
+def train(model, optimizer, train_data, dataset_name, eval_data=None, num_steps=1000, eval_every=100, top_k=1, log_dir=None,
           wandb_log=False, wandb_sweep=False, warmup_ratio=0.1, train_batch_size=8, device='cuda'):
     
     train_rel_types = get_unique_relations(train_data)
@@ -138,7 +153,7 @@ def train(model, optimizer, train_data, eval_data=None, num_steps=1000, eval_eve
     
     if log_dir is None:
         current_time = datetime.now().strftime("%Y-%m-%d--%H-%M-%S")
-        log_dir = f'logs/log-{current_time}'
+        log_dir = f'logs/{dataset_name}-{current_time}'
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
 
@@ -193,11 +208,13 @@ def train(model, optimizer, train_data, eval_data=None, num_steps=1000, eval_eve
             logger.error(f"Error in step {step}: {e}")
             continue
 
-        logger.info(f"Step {step} | x['rel_label']: {x['rel_label'].shape} | x['tokens']: {len(x['tokens'])} | x['span_idx']: {x['span_idx'].shape} | loss: {loss.item()} | candidate_classes: {x['classes_to_id']}")
+        # logger.info(f"Step {step} | x['rel_label']: {x['rel_label'].shape} | x['tokens']: {len(x['tokens'])} | x['span_idx']: {x['span_idx'].shape} | loss: {loss.item()} | candidate_classes: {x['classes_to_id']}")
+        logger.info(f"Step {step} | x['rel_label']: {x['rel_label'].shape} | loss: {loss.item()}")
         
 
         # check if loss is nan
         if torch.isnan(loss):
+            logger.warn(f"Loss is NaN at step {step}")
             continue
 
         loss.backward()  # Compute gradients
@@ -261,15 +278,6 @@ def train(model, optimizer, train_data, eval_data=None, num_steps=1000, eval_eve
             model.train()
 
         pbar.set_description(description)
-
-
-def create_parser():
-    parser = argparse.ArgumentParser(description="Zero-shot Relation Extraction")
-    parser.add_argument("--config", type=str, default="config.yaml", help="Path to config file")
-    parser.add_argument('--log_dir', type=str, default=None, help='Path to the log directory')
-    parser.add_argument("--wandb_log", action="store_true", help="Activate wandb logging")
-    parser.add_argument("--wandb_sweep", action="store_true", help="Activate wandb hyperparameter sweep")
-    return parser
 
 
 def main(args):
@@ -368,7 +376,7 @@ def main(args):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
-    train(model, optimizer, data, eval_data=eval_data, num_steps=config.num_steps, eval_every=config.eval_every, top_k=config.top_k,
+    train(model, optimizer, data, config.dataset_name, eval_data=eval_data, num_steps=config.num_steps, eval_every=config.eval_every, top_k=config.top_k,
           log_dir=config.log_dir, wandb_log=args.wandb_log, wandb_sweep=args.wandb_sweep, warmup_ratio=config.warmup_ratio, train_batch_size=config.train_batch_size,
           device=device)
 
