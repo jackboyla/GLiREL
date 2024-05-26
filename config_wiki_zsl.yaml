@@ -9,6 +9,7 @@ train_batch_size: 8
 eval_every: 1000
 
 # Model Configuration
+dataset: "wiki_zsl"
 max_width: 12
 model_name: microsoft/deberta-v3-large # hugging face model
 fine_tune: true
