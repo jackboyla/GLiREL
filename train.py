@@ -3,7 +3,7 @@ import os
 
 import torch
 from tqdm import tqdm
-from transformers import get_cosine_schedule_with_warmup
+from transformers import get_cosine_schedule_with_warmup, get_cosine_with_hard_restarts_schedule_with_warmup
 
 # from model_nested import NerFilteredSemiCRF
 from glirel import GLiREL
@@ -16,6 +16,8 @@ import random
 import shutil
 import wandb
 from functools import partial
+import importlib
+import typing
 
 
 logger = logging.getLogger(__name__)
@@ -26,10 +28,10 @@ logging.basicConfig(level=logging.INFO,
 
 '''
 
-python train.py --config config_wiki_zsl.yaml --log_dir logs-wiki-zsl
+python train.py --config config_wiki_zsl.yaml
 
 
-python train.py --config config_few_rel.yaml --log_dir logs-few-rel
+python train.py --config config_few_rel.yaml
 
 
 '''
@@ -42,7 +44,10 @@ sweep_configuration = {
     "parameters": {
         "num_train_rel_types": {"values": [15, 20, 25, 30, 35, 40]},
         "num_unseen_rel_types": {"values": [15]},
+        "random_drop": {"values": [True, False]},
         "lr_others": {"max": 1e-3, "min": 5e-5},
+        "dropout": {"max": 0.55, "min": 0.3},
+        "model_name": {"values": ["microsoft/deberta-v3-large", "microsoft/deberta-v3-small"]},
     },
 }
 
@@ -137,13 +142,13 @@ def split_data_by_relation_type(data, num_unseen_rel_types):
 
 
 # train function
-def train(model, optimizer, train_data, dataset_name, eval_data=None, num_steps=1000, eval_every=100, top_k=1, log_dir=None,
+def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, eval_every=100, top_k=1, log_dir=None,
           wandb_log=False, wandb_sweep=False, warmup_ratio=0.1, train_batch_size=8, device='cuda'):
     
     train_rel_types = get_unique_relations(train_data)
     eval_rel_types = get_unique_relations(eval_data) if eval_data is not None else None
     max_saves = 2  # Maximum number of saved models
-    
+
     if wandb_log:
         # Start a W&B Run with wandb.init
         wandb.login()
@@ -152,8 +157,8 @@ def train(model, optimizer, train_data, dataset_name, eval_data=None, num_steps=
         run = None
     
     if log_dir is None:
-        current_time = datetime.now().strftime("%Y-%m-%d--%H-%M-%S")
-        log_dir = f'logs/{dataset_name}-{current_time}'
+        current_time = datetime.now().strftime("%H-%M-%S__%Y-%m-%d")
+        log_dir = f'logs/{config.dataset_name}-{current_time}'
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
 
@@ -180,11 +185,21 @@ def train(model, optimizer, train_data, dataset_name, eval_data=None, num_steps=
     else:
         num_warmup_steps = int(warmup_ratio)
 
-    scheduler = get_cosine_schedule_with_warmup(
-        optimizer,
-        num_warmup_steps=num_warmup_steps,
-        num_training_steps=num_steps
-    )
+    if config.scheduler == "cosine_with_warmup":
+        scheduler = get_cosine_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=num_warmup_steps,
+            num_training_steps=num_steps
+        )
+    elif config.scheduler == "cosine_with_hard_restarts":
+        scheduler = get_cosine_with_hard_restarts_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=num_warmup_steps,
+            num_training_steps=num_steps,
+            num_cycles=3
+        )
+    else:
+        raise ValueError(f"Invalid scheduler: {config.scheduler}")
 
     iter_train_loader = iter(train_loader)
 
@@ -209,7 +224,7 @@ def train(model, optimizer, train_data, dataset_name, eval_data=None, num_steps=
             continue
 
         # logger.info(f"Step {step} | x['rel_label']: {x['rel_label'].shape} | x['tokens']: {len(x['tokens'])} | x['span_idx']: {x['span_idx'].shape} | loss: {loss.item()} | candidate_classes: {x['classes_to_id']}")
-        logger.info(f"Step {step} | x['rel_label']: {x['rel_label'].shape} | loss: {loss.item()}")
+        logger.info(f"Step {step} | loss: {loss.item()}")
         
 
         # check if loss is nan
@@ -376,7 +391,7 @@ def main(args):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
-    train(model, optimizer, data, config.dataset_name, eval_data=eval_data, num_steps=config.num_steps, eval_every=config.eval_every, top_k=config.top_k,
+    train(model, optimizer, data, config, eval_data=eval_data, num_steps=config.num_steps, eval_every=config.eval_every, top_k=config.top_k,
           log_dir=config.log_dir, wandb_log=args.wandb_log, wandb_sweep=args.wandb_sweep, warmup_ratio=config.warmup_ratio, train_batch_size=config.train_batch_size,
           device=device)
 
