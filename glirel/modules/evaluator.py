@@ -14,7 +14,10 @@ def extract_tp_actual_correct(y_true, y_pred):
     for type_name, head, tail, idx in y_true:
         relations_true[type_name].add((head, tail, idx))
     for type_name, head, tail, idx in y_pred:
-        relations_pred[type_name].add((head, tail, idx))
+        # we are only interested in the evaluating against 
+        # annotated relations that are present in the true data
+        if any((head, tail, idx) in relations_true[t] for t in relations_true.keys()):
+            relations_pred[type_name].add((head, tail, idx))
 
     target_names = sorted(set(relations_true.keys()) | set(relations_pred.keys()))
 
