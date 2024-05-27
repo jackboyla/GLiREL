@@ -164,6 +164,11 @@ class InstructBase(nn.Module):
                 # shuffle (every epoch)
                 random.shuffle(types)
 
+                # random drop
+                if len(types) != 0 and self.base_config.random_drop:
+                    num_rels = random.randint(1, len(types))
+                    types = types[ :num_rels]
+
 
                 # supervised training
                 if "label" in b:
