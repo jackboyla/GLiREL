@@ -16,6 +16,7 @@ logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                     handlers=[logging.StreamHandler()])
 
+# NO_RELATION_STR = "no_relation"
 
 def generate_entity_pairs_indices(span_idx):
     num_entities = span_idx.size(0)  # [num_ents, 2]
@@ -62,7 +63,7 @@ class InstructBase(nn.Module):
                 dict_tag[(tuple(rel['head']['position']), tuple(rel['tail']['position']))] = classes_to_id[rel['relation_text']]
         return dict_tag
     
-    def get_rel_labels(self, relations_idx, rel_label_dict):
+    def get_rel_labels(self, relations_idx, rel_label_dict, classes_to_id):
         # get the class for each relation pair
 
         relations_idx = relations_idx.tolist()
@@ -76,6 +77,9 @@ class InstructBase(nn.Module):
                 rel_labels.append(label)
             else:
                 rel_labels.append(0)
+            # elif NO_RELATION_STR in classes_to_id:
+            #     # non-annotated relations get assigned to "no_relation"
+            #     rel_labels.append(classes_to_id[NO_RELATION_STR])
 
         return rel_labels
     
@@ -106,7 +110,7 @@ class InstructBase(nn.Module):
             # get the class for each relation pair
             rel_label_dict = self.get_rel_dict(relations, classes_to_id)
             # 0 for null labels
-            rel_label = torch.LongTensor(self.get_rel_labels(relations_idx, rel_label_dict))  # [num_ent_pairs]
+            rel_label = torch.LongTensor(self.get_rel_labels(relations_idx, rel_label_dict, classes_to_id))  # [num_ent_pairs]
 
         else:  # no labels --> predict
             rel_label_dict = defaultdict(int)
@@ -153,10 +157,15 @@ class InstructBase(nn.Module):
 
                 # make up to num_train_rel_types using as many negatives as needed (none if there's already enough positives)
                 remainder_relations = max(0, int(self.base_config.num_train_rel_types) - len(positive_types))
+                # remainder_relations -= 1  # save space for "no_relation"
                 negs_i = [negative for negative in negs if negative not in positive_types][:remainder_relations]
 
                 # this is the list of all possible relation types (positive and negative)
                 types = list(set(positive_types + negs_i))
+
+                # # add "no relation" to labels
+                # types = [NO_RELATION_STR] + types
+
                 if len(types) < self.base_config.num_train_rel_types:
                     logger.warn(f"Relation types less than num_train_rel_types: {len(types)} < {self.base_config.num_train_rel_types}")
 
@@ -184,6 +193,7 @@ class InstructBase(nn.Module):
             ]
 
         else:
+            # entity_types = [NO_RELATION_STR] + entity_types
             class_to_ids = {k: v for v, k in enumerate(entity_types, start=1)}
             id_to_classes = {k: v for v, k in class_to_ids.items()}
             batch = [
