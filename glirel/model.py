@@ -13,6 +13,7 @@ from glirel.modules.evaluator import Evaluator, greedy_search, RelEvaluator
 from glirel.modules.span_rep import SpanRepLayer
 from glirel.modules.rel_rep import RelRepLayer
 from glirel.modules.token_rep import TokenRepLayer
+from glirel.modules import loss_functions
 from torch import nn
 from torch.nn.utils.rnn import pad_sequence
 from huggingface_hub import PyTorchModelHubMixin, hf_hub_download
@@ -199,9 +200,25 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         labels_one_hot = labels_one_hot[:, 1:]              # Remove the first column
         # Shape of labels_one_hot: (batch_size * num_spans, num_classes)
 
-        # compute loss (without reduction)
-        all_losses = F.binary_cross_entropy_with_logits(logits_label, labels_one_hot,
-                                                        reduction='none')
+        if self.config.loss_func == "binary_cross_entropy_loss":
+            # compute loss (without reduction)
+            all_losses = F.binary_cross_entropy_with_logits(
+                logits_label, 
+                labels_one_hot,
+                reduction='none'
+            )
+        elif self.config.loss_func == "focal_loss":
+            all_losses = loss_functions.focal_loss_with_logits(
+                logits_label, 
+                labels_one_hot,
+                alpha=self.config.alpha,
+                gamma=self.config.gamma,
+                reduction='none'
+            )
+        else:
+            raise ValueError(f"Invalid loss function: {self.config.loss_func}")
+        
+            
         # mask loss using entity_type_mask (B, C)
         masked_loss = all_losses.view(batch_size, -1, num_classes) * entity_type_mask.unsqueeze(1)   #  ([B, L*K, num_classes])  *  ([B, 1, num_classes])
         all_losses = masked_loss.view(-1, num_classes)
@@ -371,17 +388,18 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         device = next(self.parameters()).device
         all_preds = []
         all_trues = []
-        for x in data_loader:
+        for i, x in enumerate(data_loader):
             for k, v in x.items():
                 if isinstance(v, torch.Tensor):
                     x[k] = v.to(device)
             x['classes_to_id'] = x['classes_to_id'][0] if type(x['classes_to_id']) is list else x['classes_to_id']
             x['id_to_classes'] = x['id_to_classes'][0] if type(x['id_to_classes']) is list else x['id_to_classes']
+            if i == 0:
+                logger.info(f"## Evaluation x['classes_to_id'] --> {x['classes_to_id']}")
             ner = x['entities']
 
 
             batch_predictions = self.predict(x, flat_ner, threshold, ner)
-
 
             # TODO: test throroughly
             all_trues.extend(x["relations"])
