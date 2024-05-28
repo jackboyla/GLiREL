@@ -1,15 +1,14 @@
 # Learning Rate
 lr_encoder: 1e-5
-lr_others: 5e-3
+lr_others: 1e-4
 
 # Training Parameters
-num_steps: 30000
+num_steps: 10000
 warmup_ratio: 0.1
 train_batch_size: 8
-eval_every: 1000
+eval_every: 500
 
 # Model Configuration
-dataset: "wiki_zsl"
 max_width: 12
 model_name: microsoft/deberta-v3-large # hugging face model
 fine_tune: true
@@ -17,8 +16,13 @@ subtoken_pooling: first
 hidden_size: 768
 span_mode: marker
 dropout: 0.4
+scheduler: "cosine_with_warmup"  # "cosine_with_hard_restarts"
+loss_func: "binary_cross_entropy_loss"  # "focal_loss"
+# alpha: 0.25
+# gamma: 2
 
 # Directory Paths
+dataset_name: "wiki_zsl"
 root_dir: ablation_backbone
 train_data: "data/wiki_zsl_all.jsonl"
 
@@ -28,14 +32,12 @@ prev_path: "none"
 
 # Training Specifics
 size_sup: -1
-# max_types: 5         
-num_train_rel_types: 20   # number of relation labels to use in each given mini-batch
+num_train_rel_types: 25   # number of relation labels to use in each given mini-batch
 num_unseen_rel_types: 15
 top_k: 1                  # number of relations predictions to return at evaluation time
-shuffle_types: false
 random_drop: false       # randomly drop relation types
-# max_neg_type_ratio: 1  # ratio of positive/negative types, 1 mean 50%/50%, 2 mean 33%/66%, 3 mean 25%/75% ...
 max_len: 384
+eval_threshold: 0.1
 
 name: "large"
 
