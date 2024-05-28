@@ -75,6 +75,10 @@ class InstructBase(nn.Module):
             if (head_idx, tail_idx) in rel_label_dict:
                 label = rel_label_dict[(head_idx, tail_idx)]
                 rel_labels.append(label)
+            elif (tail_idx, head_idx) in rel_label_dict:
+                # assign the same label as the reverse relation (if it exists)
+                label = rel_label_dict[(head_idx, tail_idx)]
+                rel_labels.append(label)
             else:
                 rel_labels.append(0)
             # elif NO_RELATION_STR in classes_to_id:
