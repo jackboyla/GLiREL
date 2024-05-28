@@ -157,8 +157,8 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
         run = None
     
     if log_dir is None:
-        current_time = datetime.now().strftime("%H-%M-%S__%Y-%m-%d")
-        log_dir = f'logs/{config.dataset_name}-{current_time}'
+        current_time = datetime.now().strftime("%Y-%m-%d__%H-%M-%S")
+        log_dir = f'logs/{config.dataset_name}/{config.dataset_name}-{current_time}'
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
 
@@ -262,7 +262,7 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
                 results, f1 = model.evaluate(
                     eval_data, 
                     flat_ner=True, 
-                    threshold=0.5, 
+                    threshold=config.eval_threshold, 
                     batch_size=32,
                     entity_types=eval_rel_types,
                     top_k=top_k
