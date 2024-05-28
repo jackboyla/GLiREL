@@ -58,6 +58,7 @@ def create_parser():
     parser.add_argument('--log_dir', type=str, default=None, help='Path to the log directory')
     parser.add_argument("--wandb_log", action="store_true", help="Activate wandb logging")
     parser.add_argument("--wandb_sweep", action="store_true", help="Activate wandb hyperparameter sweep")
+    parser.add_argument("--skip_splitting", action="store_true", help="Skip dataset splitting into train and eval sets")
     return parser
 
 
@@ -346,8 +347,11 @@ def main(args):
     # train / eval split
 
     if eval_data is None:
-        # create eval set from train data
-        train_data, eval_data = split_data_by_relation_type(data, config.num_unseen_rel_types)
+        if args.skip_splitting:
+            print("Skipping dataset splitting")
+        else:
+            # create eval set from train data
+            train_data, eval_data = split_data_by_relation_type(data, config.num_unseen_rel_types)
     else:
         # partition eval data to get num_unseen_rel_types
         _, eval_data = split_data_by_relation_type(eval_data, config.num_unseen_rel_types)
