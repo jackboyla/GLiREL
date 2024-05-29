@@ -14,6 +14,7 @@ for dataset_name in ["jackboyla/ZeroRel", 'jackboyla/gone_and_growned_my_own_dat
     else:
         ds = concatenate_datasets([ds, dataset['train']])
     
+print("Loaded datasets! Transforming...")
 ds = ds.shuffle(seed=42)
 
 # print("Asserting there's no duplicates... Removing if found...")
@@ -59,12 +60,12 @@ def transform_zero_rel(data):
 
             # Add head 
             head = pair[0]['head']
-            head_start, head_end, head_type, head_text = head[0], head[1], head[2], head[3]
+            head_start, head_end, head_type, head_text = int(head[0]), int(head[1]), head[2], head[3]
             ner_entries.append([head_start, head_end, head_type, head_text])
             
             # Add tail entity
             tail = pair[0]['tail']
-            tail_start, tail_end, tail_type, tail_text = tail[0], tail[1], tail[2], tail[3]
+            tail_start, tail_end, tail_type, tail_text = int(tail[0]), int(tail[1]), tail[2], tail[3]
             ner_entries.append([tail_start, tail_end, tail_type, tail_text])
             
             # Add relation
