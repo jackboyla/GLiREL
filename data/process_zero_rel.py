@@ -2,12 +2,15 @@ from datasets import load_dataset, concatenate_datasets
 import json
 from tqdm import tqdm
 
+SEED = 42
+dataset_download_mode = None  # None  force_redownload
+
 NUM_TRAIN_EXAMPLES = 'all'
 NUM_EVAL_EXAMPLES = 'all'
 
 ds = None
-for dataset_name in ["jackboyla/ZeroRel", 'jackboyla/gone_and_growned_my_own_dataset', 'jackboyla/zsre_grow']:
-    dataset = load_dataset(dataset_name)    
+for dataset_name in ["jackboyla/ZeroRel", 'jackboyla/gone_and_growned_my_own_dataset', 'jackboyla/zsre_grow']: #  
+    dataset = load_dataset(dataset_name, download_mode=dataset_download_mode)    
     # features: ['id', 'text', 'tokenized_text', 'model_name', 'instruction', 'ents', 'generation', 'ner']
     if ds is None:
         ds = dataset['train']
@@ -15,7 +18,7 @@ for dataset_name in ["jackboyla/ZeroRel", 'jackboyla/gone_and_growned_my_own_dat
         ds = concatenate_datasets([ds, dataset['train']])
     
 print("Loaded datasets! Transforming...")
-ds = ds.shuffle(seed=42)
+ds = ds.shuffle(seed=SEED)
 
 # print("Asserting there's no duplicates... Removing if found...")
 # seen_texts = set()
@@ -50,7 +53,7 @@ def transform_zero_rel(data):
     transformed_data = []
 
     for i in tqdm(range(len(data['text']))):
-        ner_entries = []
+        ner_entries = ([[int(ent[0]), int(ent[1]), ent[2], ent[3]] for ent in data['ner'][i]])
         relations = []
         tokens = data['tokenized_text'][i][0]
 
@@ -61,18 +64,15 @@ def transform_zero_rel(data):
             # Add head 
             head = pair[0]['head']
             head_start, head_end, head_type, head_text = int(head[0]), int(head[1]), head[2], head[3]
-            ner_entries.append([head_start, head_end, head_type, head_text])
             
             # Add tail entity
             tail = pair[0]['tail']
             tail_start, tail_end, tail_type, tail_text = int(tail[0]), int(tail[1]), tail[2], tail[3]
-            ner_entries.append([tail_start, tail_end, tail_type, tail_text])
             
             # Add relation
             relations.append({
                 "head": {"mention": head_text, "position": [head_start, head_end], "type": head_type},
                 "tail": {"mention": tail_text, "position": [tail_start, tail_end], "type": tail_type},
-                # "relation_id": relation,
                 "relation_text": parse_generated_label(relation_text),
             })
 
