@@ -208,6 +208,8 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
     saved_models = []
     best_f1 = 0
 
+    accumulated_steps = 0 
+
     for step in pbar:
         try:
             x = next(iter_train_loader)
@@ -219,13 +221,18 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
             if isinstance(v, torch.Tensor):
                 x[k] = v.to(device)
 
+        # logger.info(f"Step {step} | x['rel_label']: {x['rel_label'].shape} | x['tokens']: {[len(x['tokens'][i]) for i in range(len(x['tokens']))]} | x['span_idx']: {x['span_idx'].shape} | candidate_classes: {x['classes_to_id']}")
+
         try:
             loss = model(x)  # Forward pass
         except Exception as e:
             logger.error(f"Error in step {step}: {e}")
+            logger.error(f"Num tokens: {[len(x['tokens'][i]) for i in range(len(x['tokens']))]}")
+            logger.error(f"Num relations: {[x['rel_label'][i].shape[0] for i in range(len(x['rel_label']))]}")
+            logger.error(f"Num spans: {[x['span_idx'][i].shape[0] for i in range(len(x['span_idx']))]}")
+            logger.error(f"Num candidate classes: {[len(x['classes_to_id'][i]) for i in range(len(x['classes_to_id']))]}")
             continue
 
-        # logger.info(f"Step {step} | x['rel_label']: {x['rel_label'].shape} | x['tokens']: {len(x['tokens'])} | x['span_idx']: {x['span_idx'].shape} | loss: {loss.item()} | candidate_classes: {x['classes_to_id']}")
         logger.info(f"Step {step} | loss: {loss.item()}")
         
 
@@ -234,10 +241,19 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
             logger.warn(f"Loss is NaN at step {step}")
             continue
 
-        loss.backward()  # Compute gradients
-        optimizer.step()  # Update parameters
-        scheduler.step()  # Update learning rate schedule
-        optimizer.zero_grad()  # Reset gradients
+        if config.gradient_accumulation is not None:
+            loss = loss / config.gradient_accumulation  # Normalize the loss to account for the accumulation
+            loss.backward()  # Accumulate gradients
+        else:
+            loss.backward()  # Compute gradients
+
+        accumulated_steps += 1
+        if config.gradient_accumulation is None or (accumulated_steps % config.gradient_accumulation == 0):
+            optimizer.step()        # Update parameters
+            scheduler.step()        # Update learning rate schedule
+            optimizer.zero_grad()   # Clear gradients after update
+            accumulated_steps = 0   # Reset accumulation counter
+
 
         description = f"step: {step} | epoch: {step // len(train_loader)} | loss: {loss.item():.2f}"
 
