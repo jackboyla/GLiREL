@@ -16,7 +16,6 @@ logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                     handlers=[logging.StreamHandler()])
 
-# NO_RELATION_STR = "no_relation"
 
 def generate_entity_pairs_indices(span_idx):
     num_entities = span_idx.size(0)  # [num_ents, 2]
@@ -81,9 +80,6 @@ class InstructBase(nn.Module):
                 rel_labels.append(label)
             else:
                 rel_labels.append(0)
-            # elif NO_RELATION_STR in classes_to_id:
-            #     # non-annotated relations get assigned to "no_relation"
-            #     rel_labels.append(classes_to_id[NO_RELATION_STR])
 
         return rel_labels
     
@@ -106,15 +102,25 @@ class InstructBase(nn.Module):
         for ner_span in ner:
             start, end = ner_span[0], ner_span[1]
             spans_idx.append((start, end))
+
+        MAX_SPANS = 35     # max number of span pairs -- can be increased with more VRAM
+        if len(spans_idx) > MAX_SPANS:
+            spans_idx = spans_idx[: MAX_SPANS]
+            logger.warn(f"Truncating relations and ner spans because there are too many (> {MAX_SPANS})")
+        spans_idx_list = spans_idx
         
         spans_idx = torch.LongTensor(spans_idx)                   # [num_possible_spans, 2]
         relations_idx = generate_entity_pairs_indices(spans_idx)  # [num_ent_pairs, 2, 2]
 
         if relations is not None:  # training
-            # get the class for each relation pair
-            rel_label_dict = self.get_rel_dict(relations, classes_to_id)
-            # 0 for null labels
-            rel_label = torch.LongTensor(self.get_rel_labels(relations_idx, rel_label_dict, classes_to_id))  # [num_ent_pairs]
+            for rel in relations:
+                head_idx = (rel['head']['position'][0], rel['head']['position'][1]) 
+                tail_idx = (rel['tail']['position'][0], rel['tail']['position'][1]) 
+                if head_idx in spans_idx_list and tail_idx in spans_idx_list:
+                    # get the class for each relation pair
+                    rel_label_dict = self.get_rel_dict(relations, classes_to_id)
+                    # 0 for null labels
+                    rel_label = torch.LongTensor(self.get_rel_labels(relations_idx, rel_label_dict, classes_to_id))  # [num_ent_pairs]
 
         else:  # no labels --> predict
             rel_label_dict = defaultdict(int)
@@ -181,6 +187,8 @@ class InstructBase(nn.Module):
                 if len(types) != 0 and self.base_config.random_drop:
                     num_rels = random.randint(1, len(types))
                     types = types[ :num_rels]
+
+                types = types[ : self.base_config.num_train_rel_types]
 
 
                 # supervised training
