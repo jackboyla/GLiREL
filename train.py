@@ -16,8 +16,7 @@ import random
 import shutil
 import wandb
 from functools import partial
-import importlib
-import typing
+import time
 
 
 logger = logging.getLogger(__name__)
@@ -98,6 +97,7 @@ def split_data_by_relation_type(data, num_unseen_rel_types):
     original_num_unseen_rel_types = num_unseen_rel_types
 
     logger.info(f"Running dataset splitting...")
+    start = time.time()
     count = 0
     while not correct_num_unseen_relations_achieved:
         seed = random.randint(0, 1000)
@@ -136,6 +136,7 @@ def split_data_by_relation_type(data, num_unseen_rel_types):
         logger.info(f"Skipped items: {len(skipped_items)} because they have __BOTH__ train and test relation types")
     
     logger.info(f"Split on seed {seed}")
+    logger.info(f"Splitting took {time.time() - start} seconds")
     return train_data, test_data
 
     
@@ -257,8 +258,17 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
             logger.info(f'Taking top k = {top_k} predictions for each relation...')
 
             model.eval()
+
+            current_path = os.path.join(log_dir, f'model_{step + 1}')
+            model.save_pretrained(current_path)
+
+            if eval_data is None:
+                saved_models.append(current_path)
+                if len(saved_models) > max_saves:
+                    oldest_model = saved_models.pop(0)
+                    shutil.rmtree(oldest_model)
             
-            if eval_data is not None:
+            elif eval_data is not None:
 
                 results, f1 = model.evaluate(
                     eval_data, 
@@ -278,17 +288,16 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
                     )
 
                 logger.info(f"Step={step}\n{results}")
-            current_path = os.path.join(log_dir, f'model_{step + 1}')
-            model.save_pretrained(current_path)
-
-            saved_models.append((current_path, f1))
-            if len(saved_models) > max_saves:
-                saved_models.sort(key=lambda x: x[1], reverse=True)  # Sort models by F1 score
-                lowest_f1_model = saved_models.pop()  # Remove the model with the lowest F1 score
-                if lowest_f1_model[1] < best_f1:
-                    shutil.rmtree(lowest_f1_model[0])  # Delete the model file if its score is the lowest
                 
-                best_f1 = max(best_f1, f1)  # Update the best score
+
+                saved_models.append((current_path, f1))
+                if len(saved_models) > max_saves:
+                    saved_models.sort(key=lambda x: x[1], reverse=True)  # Sort models by F1 score
+                    lowest_f1_model = saved_models.pop()  # Remove the model with the lowest F1 score
+                    if lowest_f1_model[1] < best_f1:
+                        shutil.rmtree(lowest_f1_model[0])  # Delete the model file if its score is the lowest
+                    
+                    best_f1 = max(best_f1, f1)  # Update the best score
             
 
             model.train()
@@ -349,6 +358,7 @@ def main(args):
     if eval_data is None:
         if args.skip_splitting:
             print("Skipping dataset splitting")
+            train_data = data
         else:
             # create eval set from train data
             train_data, eval_data = split_data_by_relation_type(data, config.num_unseen_rel_types)
@@ -361,12 +371,13 @@ def main(args):
     # validated_data_eval = [TextData(**d) for d in eval_data]
 
     train_rel_types = get_unique_relations(train_data)
-    eval_rel_types = get_unique_relations(eval_data)
+    eval_rel_types = get_unique_relations(eval_data) if eval_data is not None else None
     logger.info(f"Num Train relation types: {len(train_rel_types)}")
-    logger.info(f"Num Eval relation types: {len(eval_rel_types)}")
-    logger.info(f"Intersection: {set(train_rel_types) & set(eval_rel_types)}")
     logger.info(f"Number of train samples: {len(train_data)}")
-    logger.info(f"Number of eval samples: {len(eval_data)}")
+    if eval_data is not None:
+        logger.info(f"Intersection: {set(train_rel_types) & set(eval_rel_types)}")
+        logger.info(f"Num Eval relation types: {len(eval_rel_types)}")
+        logger.info(f"Number of eval samples: {len(eval_data)}")
 
 
     # Load model
