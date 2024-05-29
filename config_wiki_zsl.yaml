@@ -7,6 +7,7 @@ num_steps: 10000
 warmup_ratio: 0.1
 train_batch_size: 8
 eval_every: 500
+gradient_accumulation: null
 
 # Model Configuration
 max_width: 12
