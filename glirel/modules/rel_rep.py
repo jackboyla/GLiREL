@@ -2,6 +2,14 @@ import torch
 from torch import nn
 from glirel.modules.span_rep import create_projection_layer, SpanMarkerV0, extract_elements
 import torch.nn.functional as F
+import logging
+
+logger = logging.getLogger(__name__)
+
+logging.basicConfig(level=logging.error, 
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                    handlers=[logging.StreamHandler()])
+
 
 
 class SpanMarkerV1(nn.Module):
@@ -43,6 +51,7 @@ def get_entity_pair_reps(entity_reps):
         
         # Concatenate the representations of all possible pairs
         # The shape becomes [B, num_entities, num_entities, 2D]
+        # NOTE: OOM error can occur here -- if there's too many entities
         pair_reps = torch.cat([entity_reps_expanded, entity_reps_tiled], dim=3)  # [B, num_entities, num_entities, 2 * D]
 
         # Now we have an upper triangular matrix where each [i, j] element is the pair combination
