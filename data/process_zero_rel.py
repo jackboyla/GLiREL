@@ -9,7 +9,7 @@ NUM_TRAIN_EXAMPLES = 'all'
 NUM_EVAL_EXAMPLES = 'all'
 
 ds = None
-for dataset_name in ["jackboyla/ZeroRel", 'jackboyla/gone_and_growned_my_own_dataset', 'jackboyla/zsre_grow']: #  
+for dataset_name in ["jackboyla/ZeroRel", ]: #  'jackboyla/gone_and_growned_my_own_dataset', 'jackboyla/zsre_grow'
     dataset = load_dataset(dataset_name, download_mode=dataset_download_mode)    
     # features: ['id', 'text', 'tokenized_text', 'model_name', 'instruction', 'ents', 'generation', 'ner']
     if ds is None:
@@ -56,6 +56,7 @@ def transform_zero_rel(data):
         ner_entries = ([[int(ent[0]), int(ent[1]), ent[2], ent[3]] for ent in data['ner'][i]])
         relations = []
         tokens = data['tokenized_text'][i][0]
+        seen_rels = set()
 
         assert len(data['generation'][i]) == len(data['ents'][i])
 
@@ -75,6 +76,20 @@ def transform_zero_rel(data):
                 "tail": {"mention": tail_text, "position": [tail_start, tail_end], "type": tail_type},
                 "relation_text": parse_generated_label(relation_text),
             })
+            seen_rels.add(((head_start, head_end), (tail_start, tail_end)))
+
+        # fill empty relations with "no relation"
+        for head_start, head_end, head_type, head_text in ner_entries:
+            # head_start, head_end, head_type, head_text = int(ent1[0]), int(ent1[1]), ent1[2], ent1[3]
+            for tail_start, tail_end, tail_type, tail_text in ner_entries:
+                # tail_start, tail_end, tail_type, tail_text = int(ent2[0]), int(ent2[1]), ent2[2], ent2[3]
+
+                if (head_start, head_end) != (tail_start, tail_end) and ((head_start, head_end), (tail_start, tail_end)) not in seen_rels:
+                    relations.append({
+                        "head": {"mention": head_text, "position": [head_start, head_end], "type": head_type},
+                        "tail": {"mention": tail_text, "position": [tail_start, tail_end], "type": tail_type},
+                        "relation_text": parse_generated_label(relation_text),
+                    })
 
         transformed_data.append({
             "ner": ner_entries,
