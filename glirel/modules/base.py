@@ -12,10 +12,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-logging.basicConfig(level=logging.INFO, 
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                    handlers=[logging.StreamHandler()])
-
 
 def generate_entity_pairs_indices(span_idx):
     num_entities = span_idx.size(0)  # [num_ents, 2]
@@ -113,14 +109,20 @@ class InstructBase(nn.Module):
         relations_idx = generate_entity_pairs_indices(spans_idx)  # [num_ent_pairs, 2, 2]
 
         if relations is not None:  # training
+            included_relations = []
+            # if we need to truncate the number of relations
             for rel in relations:
                 head_idx = (rel['head']['position'][0], rel['head']['position'][1]) 
                 tail_idx = (rel['tail']['position'][0], rel['tail']['position'][1]) 
                 if head_idx in spans_idx_list and tail_idx in spans_idx_list:
-                    # get the class for each relation pair
-                    rel_label_dict = self.get_rel_dict(relations, classes_to_id)
-                    # 0 for null labels
-                    rel_label = torch.LongTensor(self.get_rel_labels(relations_idx, rel_label_dict, classes_to_id))  # [num_ent_pairs]
+                    included_relations.append(rel)
+
+            relations = included_relations
+
+            # get the class for each relation pair
+            rel_label_dict = self.get_rel_dict(relations, classes_to_id)
+            # 0 for null labels
+            rel_label = torch.LongTensor(self.get_rel_labels(relations_idx, rel_label_dict, classes_to_id))  # [num_ent_pairs]
 
         else:  # no labels --> predict
             rel_label_dict = defaultdict(int)
@@ -188,7 +190,7 @@ class InstructBase(nn.Module):
                     num_rels = random.randint(1, len(types))
                     types = types[ :num_rels]
 
-                types = types[ : self.base_config.num_train_rel_types]
+                types = types[ : 50] # self.base_config.num_train_rel_types
 
 
                 # supervised training
@@ -205,7 +207,6 @@ class InstructBase(nn.Module):
             ]
 
         else:
-            # entity_types = [NO_RELATION_STR] + entity_types
             class_to_ids = {k: v for v, k in enumerate(entity_types, start=1)}
             id_to_classes = {k: v for v, k in class_to_ids.items()}
             batch = [
