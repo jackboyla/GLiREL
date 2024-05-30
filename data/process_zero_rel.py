@@ -3,14 +3,13 @@ import json
 from tqdm import tqdm
 
 SEED = 42
-dataset_download_mode = None  # None  force_redownload
 
 NUM_TRAIN_EXAMPLES = 'all'
 NUM_EVAL_EXAMPLES = 'all'
 
 ds = None
-for dataset_name in ["jackboyla/ZeroRel", ]: #  'jackboyla/gone_and_growned_my_own_dataset', 'jackboyla/zsre_grow'
-    dataset = load_dataset(dataset_name, download_mode=dataset_download_mode)    
+for dataset_name in ["jackboyla/ZeroRel", 'jackboyla/gone_and_growned_my_own_dataset', 'jackboyla/zsre_grow']: #  
+    dataset = load_dataset(dataset_name, download_mode='force_redownload')    
     # features: ['id', 'text', 'tokenized_text', 'model_name', 'instruction', 'ents', 'generation', 'ner']
     if ds is None:
         ds = dataset['train']
@@ -30,8 +29,6 @@ ds = ds.shuffle(seed=SEED)
 # print(f"Found {len(ds) - len(selection_idx)} duplicates! :(")
 
 # data = ds.select(selection_idx)
-data = ds
-data = data.to_dict()
 
 
 def parse_generated_label(label: str):
@@ -106,9 +103,14 @@ def transform_zero_rel(data):
     return transformed_data
 
 
-transformed_data = transform_zero_rel(data)
-
 with open('./zero_rel_all.jsonl', 'w') as f:
-    for item in transformed_data:
-        f.write(json.dumps(item) + '\n')
+    step_size = 10_000
+    for step in range(0, len(ds), step_size):
+        end = min(step + step_size, len(ds))
+        data = ds.select(range(step, end))
+        data = data.to_dict()
+        transformed_data = transform_zero_rel(data)
+
+        for item in transformed_data:
+            f.write(json.dumps(item) + '\n')
 
