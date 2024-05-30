@@ -6,9 +6,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-logging.basicConfig(level=logging.error, 
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                    handlers=[logging.StreamHandler()])
 
 
 
