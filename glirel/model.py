@@ -395,7 +395,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
             x['classes_to_id'] = x['classes_to_id'][0] if type(x['classes_to_id']) is list else x['classes_to_id']
             x['id_to_classes'] = x['id_to_classes'][0] if type(x['id_to_classes']) is list else x['id_to_classes']
             if i == 0:
-                logger.info(f"## Evaluation x['classes_to_id'] --> {x['classes_to_id']}")
+                logger.info(f"## Evaluation x['classes_to_id'] (showing first 15) --> {list(x['classes_to_id'].keys())[:15]}")
             ner = x['entities']
 
 
