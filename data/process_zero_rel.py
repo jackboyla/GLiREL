@@ -44,8 +44,14 @@ def parse_generated_label(label: str):
     label = label.replace(':', ' ')
     label = label.replace('"', ' ')
     label = label.replace("'", ' ')
+    label = label.replace("{", ' ')
+    label = label.replace("}", ' ')
+    label = label.replace("[", ' ')
+    label = label.replace("]", ' ')
     label = label.strip()
-    return label.split(' ')[0]
+    label = label.split(' ')[0]
+    label = label.replace('_', " ")
+    return label
 
 
 def transform_zero_rel(data):
