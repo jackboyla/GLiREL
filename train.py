@@ -16,6 +16,7 @@ import random
 import shutil
 import wandb
 from functools import partial
+from sklearn.model_selection import train_test_split
 import time
 
 
@@ -131,6 +132,8 @@ def split_data_by_relation_type(data, num_unseen_rel_types):
         # logger.info('Incorrect number of unseen relation types. Retrying...')
 
         count += 1
+        if count % 50 == 0:
+            logger.info(f"Attempt {count} | Seed {seed}")
 
     if len(skipped_items) > 0:
         logger.info(f"Skipped items: {len(skipped_items)} because they have __BOTH__ train and test relation types")
@@ -140,7 +143,47 @@ def split_data_by_relation_type(data, num_unseen_rel_types):
     return train_data, test_data
 
     
+def dirty_split_data_by_relation_type(data, num_unseen_rel_types):
+    '''
+    This function does not care if the interesection of train and test relation types is empty.
+    Used for custom datasets to avoid having a large number of eval classes (causes OOM), 
+    and I do not mind if the eval set has some train classes.
+    '''
+    logger.info("Dirty splitting data...")
 
+    unique_relations = get_unique_relations(data)
+    correct_num_unseen_relations_achieved = False
+    original_num_unseen_rel_types = num_unseen_rel_types
+
+
+    while not correct_num_unseen_relations_achieved:
+        seed = random.randint(0, 1000)
+        random.seed(seed)
+        random.shuffle(unique_relations)
+        test_relation_types = set(unique_relations[ : num_unseen_rel_types ])
+        # train_relation_types = set(unique_relations[ num_unseen_rel_types : ])
+        
+        train_data = []
+        test_data = []
+
+        # Splitting data based on relation types
+        for item in data:
+            relation_types = {r["relation_text"] for r in item['relations']}
+            if relation_types.issubset(test_relation_types):
+                test_data.append(item)
+            else:
+                train_data.append(item)
+
+        # if we have the right number of eval relations, break
+        if len(get_unique_relations(test_data)) == original_num_unseen_rel_types: 
+            correct_num_unseen_relations_achieved = True
+        else:
+            # bump the number of unseen relations by 1 to cast a wider net
+            # if the bump gets too big, reset it
+            num_unseen_rel_types = num_unseen_rel_types + 1 if (num_unseen_rel_types <  original_num_unseen_rel_types*2) else num_unseen_rel_types
+
+
+    return train_data, test_data
 
 
 # train function
@@ -232,8 +275,6 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
             logger.error(f"Num spans: {[x['span_idx'][i].shape[0] for i in range(len(x['span_idx']))]}")
             logger.error(f"Num candidate classes: {[len(x['classes_to_id'][i]) for i in range(len(x['classes_to_id']))]}")
             continue
-
-        logger.info(f"Step {step} | loss: {loss.item()}")
         
 
         # check if loss is nan
@@ -246,6 +287,8 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
             loss.backward()  # Accumulate gradients
         else:
             loss.backward()  # Compute gradients
+
+        logger.info(f"Step {step} | loss: {loss.item()} | x['rel_label']: {x['rel_label'].shape} | x['span_idx']: {x['span_idx'].shape} | x['tokens']: {[len(x['tokens'][i]) for i in range(len(x['tokens']))]} | num candidate_classes: {len(x['classes_to_id'][0].keys())}")
 
         accumulated_steps += 1
         if config.gradient_accumulation is None or (accumulated_steps % config.gradient_accumulation == 0):
@@ -290,7 +333,7 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
                     eval_data, 
                     flat_ner=True, 
                     threshold=config.eval_threshold, 
-                    batch_size=32,
+                    batch_size=config.eval_batch_size,
                     entity_types=eval_rel_types,
                     top_k=top_k
                 )
@@ -341,17 +384,18 @@ def main(args):
 
     # Prep data
 
-    try:
-        if config.train_data.endswith('.jsonl'):
-            with open(config.train_data, 'r') as f:
-                data = [json.loads(line) for line in f]
-        elif config.train_data.endswith('.json'):
-            with open(config.train_data, 'r') as f:
-                data = json.load(f)
-        else:
-            raise ValueError(f"Invalid data format: {config.train_data}")
-    except:
-        data = sample_train_data(config.train_data, 10000)
+    if config.train_data.endswith('.jsonl'):
+        with open(config.train_data, 'r') as f:
+            data = [json.loads(line) for line in f]
+            # data = []
+            # for i in range(800):
+            #     data.append(json.loads(next(f)))
+    elif config.train_data.endswith('.json'):
+        with open(config.train_data, 'r') as f:
+            data = json.load(f)
+    else:
+        raise ValueError(f"Invalid data format: {config.train_data}")
+
 
 
     if hasattr(config, 'eval_data'):
@@ -374,13 +418,21 @@ def main(args):
     if eval_data is None:
         if args.skip_splitting:
             print("Skipping dataset splitting")
+            data = sorted(data, key=lambda x: len(x['tokenized_text']))
             train_data = data
-        else:
+        elif config.num_unseen_rel_types is not None:
             # create eval set from train data
-            train_data, eval_data = split_data_by_relation_type(data, config.num_unseen_rel_types)
+            if config.dataset_name == 'zero_rel':
+                train_data, eval_data = dirty_split_data_by_relation_type(data, config.num_unseen_rel_types)
+            else:
+                train_data, eval_data = split_data_by_relation_type(data, config.num_unseen_rel_types)
+        else:
+            print("No unseen relation types specified. Randomly splitting data into train and eval sets.")
+            data = sorted(data, key=lambda x: len(x['tokenized_text']))
+            train_data, eval_data = train_test_split(data, test_size=5_000, random_state=42)
     else:
-        # partition eval data to get num_unseen_rel_types
-        _, eval_data = split_data_by_relation_type(eval_data, config.num_unseen_rel_types)
+        # _, eval_data = split_data_by_relation_type(eval_data, config.num_unseen_rel_types)
+        eval_data = eval_data
         train_data = data
 
     # validated_data = [TextData(**d) for d in train_data]
