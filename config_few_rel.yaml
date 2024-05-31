@@ -8,6 +8,7 @@ warmup_ratio: 0.1
 train_batch_size: 8
 eval_every: 500
 gradient_accumulation: null
+eval_batch_size: 32
 
 # Model Configuration
 max_width: 12
@@ -25,8 +26,7 @@ loss_func: "binary_cross_entropy_loss"  # "binary_cross_entropy_loss"  # "focal_
 # Directory Paths
 dataset_name: "few_rel"
 root_dir: ablation_backbone
-train_data: "data/few_rel_train.jsonl"
-eval_data: "data/few_rel_eval.jsonl"
+train_data: "data/few_rel_all.jsonl"
 
 # "none" if no pretrained model 
 prev_path: "none"

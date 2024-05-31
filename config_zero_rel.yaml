@@ -3,11 +3,12 @@ lr_encoder: 1e-5
 lr_others: 1e-4
 
 # Training Parameters
-num_steps: 10000
+num_steps: 80000
 warmup_ratio: 0.1
-train_batch_size: 2
+train_batch_size: 1
 eval_every: 500
-gradient_accumulation: 4   # null
+gradient_accumulation: 8   # null
+eval_batch_size: 1
 
 # Model Configuration
 max_width: 12
@@ -34,7 +35,7 @@ prev_path: "none"
 # Training Specifics
 size_sup: -1
 num_train_rel_types: 15   # number of relation labels to use in each given mini-batch
-num_unseen_rel_types: 15
+num_unseen_rel_types: 15   # 15
 top_k: 1                  # number of relations predictions to return at evaluation time
 random_drop: false       # randomly drop relation types
 max_len: 384
