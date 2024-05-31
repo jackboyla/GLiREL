@@ -1,11 +1,14 @@
-from datasets import load_dataset
+from datasets import load_dataset, concatenate_datasets
 import json
 
 NUM_TRAIN_EXAMPLES = 'all'
 NUM_EVAL_EXAMPLES = 'all'
 
 dataset = load_dataset("few_rel")    # features: ['relation', 'tokens', 'head', 'tail', 'names'],
-ds = dataset['train_wiki'].shuffle(seed=42)
+ds_train = dataset['train_wiki'].shuffle(seed=42)
+ds_val = dataset['val_wiki'].shuffle(seed=42)
+ds = concatenate_datasets([ds_train, ds_val])
+print(f"Number of examples: {len(ds)}")
 
 # for i in range(15): 
 #     rel_texts = [rel for rel in ds[i]['names'][i]]
@@ -72,20 +75,6 @@ def transform_few_rel(data):
 
 transformed_data = transform_few_rel(data)
 
-with open('./few_rel_train.jsonl', 'w') as f:
-    for item in transformed_data:
-        f.write(json.dumps(item) + '\n')
-
-# Eval data
-ds = dataset['val_wiki'].shuffle(seed=42)
-if type(NUM_EVAL_EXAMPLES) is int:
-    data = ds.select(range(NUM_EVAL_EXAMPLES))
-else:
-    data = ds
-data = data.to_dict()
-
-transformed_data = transform_few_rel(data)
-
-with open('./few_rel_eval.jsonl', 'w') as f:
+with open('./few_rel_all.jsonl', 'w') as f:
     for item in transformed_data:
         f.write(json.dumps(item) + '\n')
