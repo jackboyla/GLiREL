@@ -143,7 +143,7 @@ def split_data_by_relation_type(data, num_unseen_rel_types):
     return train_data, test_data
 
     
-def dirty_split_data_by_relation_type(data, num_unseen_rel_types):
+def dirty_split_data_by_relation_type(data, num_unseen_rel_types, max_test_size=3000):
     '''
     This function does not care if the interesection of train and test relation types is empty.
     Used for custom datasets to avoid having a large number of eval classes (causes OOM), 
@@ -161,7 +161,6 @@ def dirty_split_data_by_relation_type(data, num_unseen_rel_types):
         random.seed(seed)
         random.shuffle(unique_relations)
         test_relation_types = set(unique_relations[ : num_unseen_rel_types ])
-        # train_relation_types = set(unique_relations[ num_unseen_rel_types : ])
         
         train_data = []
         test_data = []
@@ -169,7 +168,7 @@ def dirty_split_data_by_relation_type(data, num_unseen_rel_types):
         # Splitting data based on relation types
         for item in data:
             relation_types = {r["relation_text"] for r in item['relations']}
-            if relation_types.issubset(test_relation_types):
+            if len(test_data) < max_test_size and any([rel in test_relation_types for rel in relation_types]):
                 test_data.append(item)
             else:
                 train_data.append(item)
@@ -188,7 +187,7 @@ def dirty_split_data_by_relation_type(data, num_unseen_rel_types):
 
 # train function
 def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, eval_every=100, top_k=1, log_dir=None,
-          wandb_log=False, wandb_sweep=False, warmup_ratio=0.1, train_batch_size=8, device='cuda'):
+          wandb_log=False, wandb_sweep=False, warmup_ratio=0.1, train_batch_size=8, device='cuda', use_amp=True):
     
     train_rel_types = get_unique_relations(train_data)
     eval_rel_types = get_unique_relations(eval_data) if eval_data is not None else None
@@ -201,22 +200,7 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
     else:
         run = None
     
-    if log_dir is None:
-        current_time = datetime.now().strftime("%Y-%m-%d__%H-%M-%S")
-        log_dir = f'logs/{config.dataset_name}/{config.dataset_name}-{current_time}'
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
-
-    # set up logging
-    log_file = "train.log"
-    log_file_path = os.path.join(log_dir, log_file)
-    if os.path.exists(log_file_path):
-        os.remove(log_file_path)
-    file_handler = logging.FileHandler(log_file_path)
-    file_handler.setLevel(logging.INFO)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
 
     model.train()
 
@@ -264,17 +248,17 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
             if isinstance(v, torch.Tensor):
                 x[k] = v.to(device)
 
-        # logger.info(f"Step {step} | x['rel_label']: {x['rel_label'].shape} | x['tokens']: {[len(x['tokens'][i]) for i in range(len(x['tokens']))]} | x['span_idx']: {x['span_idx'].shape} | candidate_classes: {x['classes_to_id']}")
 
-        try:
-            loss = model(x)  # Forward pass
-        except Exception as e:
-            logger.error(f"Error in step {step}: {e}")
-            logger.error(f"Num tokens: {[len(x['tokens'][i]) for i in range(len(x['tokens']))]}")
-            logger.error(f"Num relations: {[x['rel_label'][i].shape[0] for i in range(len(x['rel_label']))]}")
-            logger.error(f"Num spans: {[x['span_idx'][i].shape[0] for i in range(len(x['span_idx']))]}")
-            logger.error(f"Num candidate classes: {[len(x['classes_to_id'][i]) for i in range(len(x['classes_to_id']))]}")
-            continue
+        with torch.autocast(device_type=device, dtype=torch.float16, enabled=use_amp):
+            try:
+                loss = model(x)  # Forward pass
+            except Exception as e:
+                logger.error(f"Error in step {step}: {e}")
+                logger.error(f"Num tokens: {[len(x['tokens'][i]) for i in range(len(x['tokens']))]}")
+                logger.error(f"Num relations: {[x['rel_label'][i].shape[0] for i in range(len(x['rel_label']))]}")
+                logger.error(f"Num spans: {[x['span_idx'][i].shape[0] for i in range(len(x['span_idx']))]}")
+                logger.error(f"Num candidate classes: {[len(x['classes_to_id'][i]) for i in range(len(x['classes_to_id']))]}")
+                continue
         
 
         # check if loss is nan
@@ -284,17 +268,26 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
 
         if config.gradient_accumulation is not None:
             loss = loss / config.gradient_accumulation  # Normalize the loss to account for the accumulation
-            loss.backward()  # Accumulate gradients
-        else:
-            loss.backward()  # Compute gradients
+
+        try:
+            scaler.scale(loss).backward()  # Compute gradients
+        except Exception as e:
+            logger.error(f"Backprop Loss Error in step {step}: {e}")
+            logger.error(f"Num tokens: {[len(x['tokens'][i]) for i in range(len(x['tokens']))]}")
+            logger.error(f"Num relations: {[x['rel_label'][i].shape[0] for i in range(len(x['rel_label']))]}")
+            logger.error(f"Num spans: {[x['span_idx'][i].shape[0] for i in range(len(x['span_idx']))]}")
+            logger.error(f"Num candidate classes: {[len(x['classes_to_id'][i]) for i in range(len(x['classes_to_id']))]}")
+            continue
 
         logger.info(f"Step {step} | loss: {loss.item()} | x['rel_label']: {x['rel_label'].shape} | x['span_idx']: {x['span_idx'].shape} | x['tokens']: {[len(x['tokens'][i]) for i in range(len(x['tokens']))]} | num candidate_classes: {len(x['classes_to_id'][0].keys())}")
 
         accumulated_steps += 1
         if config.gradient_accumulation is None or (accumulated_steps % config.gradient_accumulation == 0):
-            optimizer.step()        # Update parameters
+            # optimizer.step()        # Update parameters
+            scaler.step(optimizer)
+            scaler.update()
             scheduler.step()        # Update learning rate schedule
-            optimizer.zero_grad()   # Clear gradients after update
+            optimizer.zero_grad()   # Clear gradients after update (set_to_none=True here can modestly improve performance)
             accumulated_steps = 0   # Reset accumulation counter
 
 
@@ -366,11 +359,30 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
 
 def main(args):
 
-    logger.info("🚀 Relation extraction training started")
-
-
     # load config
     config = load_config_as_namespace(args.config)
+
+    config.log_dir = args.log_dir
+
+    # set up logging
+    if config.log_dir is None:
+        current_time = datetime.now().strftime("%Y-%m-%d__%H-%M-%S")
+        config.log_dir = f'logs/{config.dataset_name}/{config.dataset_name}-{current_time}'
+    if not os.path.exists(config.log_dir):
+        os.makedirs(config.log_dir)
+
+    log_file = "train.log"
+    log_file_path = os.path.join(config.log_dir, log_file)
+    if os.path.exists(log_file_path):
+        os.remove(log_file_path)
+    file_handler = logging.FileHandler(log_file_path)
+    file_handler.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    logger.info("🚀 Relation extraction training started")
+
 
     if args.wandb_sweep:
         run = wandb.init()
@@ -380,15 +392,13 @@ def main(args):
         config.lr_others = wandb.config.lr_others
 
 
-    config.log_dir = args.log_dir
-
     # Prep data
 
     if config.train_data.endswith('.jsonl'):
         with open(config.train_data, 'r') as f:
             data = [json.loads(line) for line in f]
             # data = []
-            # for i in range(800):
+            # for i in range(2_000):
             #     data.append(json.loads(next(f)))
     elif config.train_data.endswith('.json'):
         with open(config.train_data, 'r') as f:
@@ -418,25 +428,31 @@ def main(args):
     if eval_data is None:
         if args.skip_splitting:
             print("Skipping dataset splitting")
-            data = sorted(data, key=lambda x: len(x['tokenized_text']))
+            data = sorted(data, key=lambda x: len(x['relations']))
             train_data = data
         elif config.num_unseen_rel_types is not None:
             # create eval set from train data
             if config.dataset_name == 'zero_rel':
-                train_data, eval_data = dirty_split_data_by_relation_type(data, config.num_unseen_rel_types)
+                # train_data, eval_data = dirty_split_data_by_relation_type(data, config.num_unseen_rel_types)
+                file_name = 'data/wiki_zsl_all.jsonl'
+                config.eval_data = file_name
+                with open(file_name, 'r') as f:
+                    logger.info(f"Generating eval split from {file_name}...")
+                    eval_data = [json.loads(line) for line in f]
+                _, eval_data = split_data_by_relation_type(eval_data, config.num_unseen_rel_types)
+                data = sorted(data, key=lambda x: len(x['relations']))
+                train_data = data
             else:
                 train_data, eval_data = split_data_by_relation_type(data, config.num_unseen_rel_types)
         else:
             print("No unseen relation types specified. Randomly splitting data into train and eval sets.")
-            data = sorted(data, key=lambda x: len(x['tokenized_text']))
+            data = sorted(data, key=lambda x: len(x['relations']))
             train_data, eval_data = train_test_split(data, test_size=5_000, random_state=42)
     else:
         # _, eval_data = split_data_by_relation_type(eval_data, config.num_unseen_rel_types)
         eval_data = eval_data
         train_data = data
 
-    # validated_data = [TextData(**d) for d in train_data]
-    # validated_data_eval = [TextData(**d) for d in eval_data]
 
     train_rel_types = get_unique_relations(train_data)
     eval_rel_types = get_unique_relations(eval_data) if eval_data is not None else None
