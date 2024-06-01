@@ -6,7 +6,7 @@ lr_others: 1e-4
 num_steps: 10000
 warmup_ratio: 0.1
 train_batch_size: 8
-eval_every: 5
+eval_every: 500
 gradient_accumulation: null
 eval_batch_size: 32
 
