@@ -101,8 +101,8 @@ class InstructBase(nn.Module):
 
         MAX_SPANS = 35     # max number of span pairs -- can be increased with more VRAM
         if len(spans_idx) > MAX_SPANS:
+            logger.warn(f"Truncating relations and ner spans because there are too many ({len(spans_idx)} > {MAX_SPANS})")
             spans_idx = spans_idx[: MAX_SPANS]
-            logger.warn(f"Truncating relations and ner spans because there are too many (> {MAX_SPANS})")
         spans_idx_list = spans_idx
         
         spans_idx = torch.LongTensor(spans_idx)                   # [num_possible_spans, 2]
@@ -190,7 +190,7 @@ class InstructBase(nn.Module):
                     num_rels = random.randint(1, len(types))
                     types = types[ :num_rels]
 
-                types = types[ : 50] # self.base_config.num_train_rel_types
+                types = types[ : 35] # self.base_config.num_train_rel_types
 
 
                 # supervised training
