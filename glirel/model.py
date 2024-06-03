@@ -320,10 +320,10 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
             rels.append(rels_i)
         return rels
 
-    def predict_relations(self, text, labels, flat_ner=True, threshold=0.5, ner=None):
-        return self.batch_predict_relations([text], labels, flat_ner=flat_ner, threshold=threshold, ner=[ner])[0]
+    def predict_relations(self, text, labels, flat_ner=True, threshold=0.5, ner=None, top_k=-1):
+        return self.batch_predict_relations([text], labels, flat_ner=flat_ner, threshold=threshold, ner=[ner], top_k=top_k)[0]
 
-    def batch_predict_relations(self, texts, labels, flat_ner=True, threshold=0.5, ner=None):
+    def batch_predict_relations(self, texts, labels, flat_ner=True, threshold=0.5, ner=None, top_k=-1):
         """
         Predict relations for a batch of texts.
         texts:  List of texts | List[str]
@@ -359,6 +359,29 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         
         outputs = self.predict(x, flat_ner=flat_ner, threshold=threshold, ner=ner)
 
+        # retrieve top_k predictions (if top_k > -1)
+        if top_k > 0:
+            top_k_outputs = []
+            for i, output in enumerate(outputs):
+
+                # sort output by score
+                output = sorted(output, key=lambda x: x[2], reverse=True)
+
+                rels = []
+                position_set = {}  # track all position predictions to take top_k predictions
+                for rel in output:
+                    (head_pos, tail_pos), pred_label, score = rel
+
+                    hashable_positions = (tuple(head_pos), tuple(tail_pos))
+                    if hashable_positions not in position_set:
+                        position_set[hashable_positions] = 0
+
+                    if position_set[hashable_positions] < top_k:
+                        rels.append(rel)
+                        position_set[hashable_positions] += 1
+
+                top_k_outputs.append(rels)
+            outputs = top_k_outputs
 
         all_relations = []
 
