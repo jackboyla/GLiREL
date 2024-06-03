@@ -18,6 +18,7 @@ import wandb
 from functools import partial
 from sklearn.model_selection import train_test_split
 import time
+import gc
 
 
 logger = logging.getLogger(__name__)
@@ -244,9 +245,7 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
             iter_train_loader = iter(train_loader)
             x = next(iter_train_loader)
 
-        for k, v in x.items():
-            if isinstance(v, torch.Tensor):
-                x[k] = v.to(device)
+        x = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in x.items()}
 
 
         with torch.autocast(device_type=device, dtype=torch.float16, enabled=use_amp):
@@ -287,7 +286,7 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
             scaler.step(optimizer)
             scaler.update()
             scheduler.step()        # Update learning rate schedule
-            optimizer.zero_grad()   # Clear gradients after update (set_to_none=True here can modestly improve performance)
+            optimizer.zero_grad(set_to_none=True)   # Clear gradients after update (set_to_none=True here can modestly improve performance)
             accumulated_steps = 0   # Reset accumulation counter
 
 
@@ -306,13 +305,11 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
 
         if (step + 1) % eval_every == 0:
 
-            logger.info('Evaluating...')
-            logger.info(f'Taking top k = {top_k} predictions for each relation...')
-
             model.eval()
 
             current_path = os.path.join(log_dir, f'model_{step + 1}')
             model.save_pretrained(current_path)
+            logger.info(f"Model saved at {current_path}")
 
             if eval_data is None:
                 saved_models.append(current_path)
@@ -321,38 +318,45 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
                     shutil.rmtree(oldest_model)
             
             elif eval_data is not None:
+                with torch.no_grad():
 
-                results, f1 = model.evaluate(
-                    eval_data, 
-                    flat_ner=True, 
-                    threshold=config.eval_threshold, 
-                    batch_size=config.eval_batch_size,
-                    entity_types=eval_rel_types,
-                    top_k=top_k
-                )
+                    logger.info('Evaluating...')
+                    logger.info(f'Taking top k = {top_k} predictions for each relation...')
 
-                if wandb_sweep:
-                    wandb.log(
-                            {
-                            "epoch": step // len(train_loader),
-                            "eval_f1": f1,
-                        }
+                    results, f1 = model.evaluate(
+                        eval_data, 
+                        flat_ner=True, 
+                        threshold=config.eval_threshold, 
+                        batch_size=config.eval_batch_size,
+                        entity_types=eval_rel_types,
+                        top_k=top_k
                     )
 
-                logger.info(f"Step={step}\n{results}")
-                
+                    if wandb_sweep:
+                        wandb.log(
+                                {
+                                "epoch": step // len(train_loader),
+                                "eval_f1": f1,
+                            }
+                        )
 
-                saved_models.append((current_path, f1))
-                if len(saved_models) > max_saves:
-                    saved_models.sort(key=lambda x: x[1], reverse=True)  # Sort models by F1 score
-                    lowest_f1_model = saved_models.pop()  # Remove the model with the lowest F1 score
-                    if lowest_f1_model[1] < best_f1:
-                        shutil.rmtree(lowest_f1_model[0])  # Delete the model file if its score is the lowest
+                    logger.info(f"Step={step}\n{results}")
                     
-                    best_f1 = max(best_f1, f1)  # Update the best score
+
+                    saved_models.append((current_path, f1))
+                    if len(saved_models) > max_saves:
+                        saved_models.sort(key=lambda x: x[1], reverse=True)  # Sort models by F1 score
+                        lowest_f1_model = saved_models.pop()  # Remove the model with the lowest F1 score
+                        if lowest_f1_model[1] < best_f1:
+                            shutil.rmtree(lowest_f1_model[0])  # Delete the model file if its score is the lowest
+                        
+                        best_f1 = max(best_f1, f1)  # Update the best score
             
 
             model.train()
+                
+            torch.cuda.empty_cache()  # Clear cache after evaluation to prepare for training
+            gc.collect()
 
         pbar.set_description(description)
 
@@ -398,7 +402,7 @@ def main(args):
         with open(config.train_data, 'r') as f:
             data = [json.loads(line) for line in f]
             # data = []
-            # for i in range(2_000):
+            # for i in range(10_000):
             #     data.append(json.loads(next(f)))
     elif config.train_data.endswith('.json'):
         with open(config.train_data, 'r') as f:
