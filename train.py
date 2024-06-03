@@ -339,6 +339,8 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
                                 "eval_f1": f1,
                             }
                         )
+                    elif run is not None:
+                        run.log({"eval_f1": f1})
 
                     logger.info(f"Step={step}\n{results}")
                     
@@ -400,10 +402,10 @@ def main(args):
 
     if config.train_data.endswith('.jsonl'):
         with open(config.train_data, 'r') as f:
-            data = [json.loads(line) for line in f]
-            # data = []
-            # for i in range(10_000):
-            #     data.append(json.loads(next(f)))
+            # data = [json.loads(line) for line in f]
+            data = []
+            for i in range(1_000):
+                data.append(json.loads(next(f)))
     elif config.train_data.endswith('.json'):
         with open(config.train_data, 'r') as f:
             data = json.load(f)
@@ -475,6 +477,11 @@ def main(args):
         model.config = config
     else:
         model = GLiREL(config)
+
+    # Get number of parameters (trainable and total)
+    num_params = sum(p.numel() for p in model.parameters())
+    num_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.info(f"Number of trainable parameters: {num_trainable_params} / {num_params}")
 
     if torch.cuda.is_available():
         model = model.to('cuda')

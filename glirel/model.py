@@ -7,13 +7,14 @@ from typing import Dict, Optional, Union
 import torch
 import torch.nn.functional as F
 import yaml
-from glirel.modules.layers import LstmSeq2SeqEncoder, ScorerLayer
+from glirel.modules.layers import LstmSeq2SeqEncoder, ScorerLayer, FilteringLayer, RefineLayer
 from glirel.modules.base import InstructBase
 from glirel.modules.evaluator import Evaluator, greedy_search, RelEvaluator
 from glirel.modules.span_rep import SpanRepLayer
 from glirel.modules.rel_rep import RelRepLayer
 from glirel.modules.token_rep import TokenRepLayer
 from glirel.modules import loss_functions
+from glirel.modules.utils import get_ground_truth_relations, _get_candidates
 from torch import nn
 from torch.nn.utils.rnn import pad_sequence
 from huggingface_hub import PyTorchModelHubMixin, hf_hub_download
@@ -69,6 +70,26 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
             nn.Linear(config.hidden_size * 4, config.hidden_size)
         )
 
+        # filtering layer for relations
+        self._rel_filtering = FilteringLayer(config.hidden_size)
+
+
+        # refine relation representation
+        if hasattr(config, "refine_relation"):
+            self.refine_relation = RefineLayer(
+                config.hidden_size, config.hidden_size // 64, num_layers=1, ffn_mul=config.ffn_mul,
+                dropout=config.dropout,
+                read_only=True
+            )
+
+        # refine prompt representation
+        if hasattr(config, "refine_prompt"):
+            self.refine_prompt = RefineLayer(
+                config.hidden_size, config.hidden_size // 64, num_layers=2, ffn_mul=config.ffn_mul,
+                dropout=config.dropout,
+                read_only=True
+            )
+
         # scoring layer
         self.scorer = ScorerLayer(scoring_type=config.scorer, hidden_size=config.hidden_size, dropout=config.dropout)
 
@@ -82,9 +103,10 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         param_groups = [
             # encoder
             {'params': self.rnn.parameters(), 'lr': lr_others},
-            # projection layers
             {'params': self.span_rep_layer.parameters(), 'lr': lr_others},
             {'params': self.prompt_rep_layer.parameters(), 'lr': lr_others},
+            {"params": self._rel_filtering.parameters(), "lr": lr_others},
+            {'params': self.scorer.parameters(), 'lr': lr_others}
         ]
 
         if not freeze_token_rep:
@@ -171,15 +193,68 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
         # compute span representation
         word_rep = self.rnn(word_rep, mask)                  # ([B, seq_length, D])
-        span_rep = self.span_rep_layer(word_rep, span_idx)   # NER --> ([B, seq_length, 12, D]) 
-                                                             # or REL --> ([B, num_pairs, D])
+        rel_rep = self.span_rep_layer(word_rep, span_idx)   # ([B, num_pairs, D])
 
         # compute final entity type representation (FFN)
         entity_type_rep = self.prompt_rep_layer(entity_type_rep)  # (batch_size, len_types, hidden_size)
         num_classes = entity_type_rep.shape[1]                    # number of entity types
+        import ipdb;ipdb.set_trace()
+
+        #######################################
+        # configure masks for entity #############################################
+        ##########################################################################
+        top_k_lengths = x["seq_length"].clone() + self.config.add_top_k
+        arange_topk = torch.arange(max_top_k, device=span_rep.device)
+        masked_fill_cond = arange_topk.unsqueeze(0) >= top_k_lengths.unsqueeze(-1)
+        candidate_span_mask.masked_fill_(masked_fill_cond, 0)
+        candidate_span_label.masked_fill_(masked_fill_cond, -1)
+        ##########################################################################
+        ##########################################################################
+
+        # get ground truth relations
+        # relation_classes = get_ground_truth_relations(x, candidate_spans_idx, candidate_span_label)
+        relation_classes = x['rel_label']
+
+
+        # filtering scores for relations
+        # filter_score_rel, filter_loss_rel = self._rel_filtering(
+        #     rel_rep.view(B, max_top_k * max_top_k, -1), relation_classes)
+        filter_score_rel, filter_loss_rel = self._rel_filtering(rel_rep, relation_classes)
+
+        # filtering scores for relation pairs
+        _, sorted_idx_pair = torch.sort(filter_score_rel, dim=-1, descending=True)
+
+        # Get candidate pairs and labels
+        candidate_pair_rep, candidate_pair_label = [_get_candidates(sorted_idx_pair, el, topk=max_top_k)[0] for el
+                                                    in
+                                                    [rel_rep.view(B, max_top_k * max_top_k, -1),
+                                                     relation_classes.view(B, max_top_k * max_top_k)]]
+
+        topK_rel_idx = sorted_idx_pair[:, :max_top_k]
+
+        #######################################################
+        candidate_pair_label.masked_fill_(masked_fill_cond, -1)
+        #######################################################
+
+        # refine relation representation ##############################################
+        candidate_pair_mask = candidate_pair_label > -1
+        ################################################################################
+
+        if hasattr(self.config, "refine_relation"):
+            # refine relation representation
+            candidate_pair_rep = self.refine_relation(
+                candidate_pair_rep, word_rep, candidate_pair_mask, word_mask
+            )
+
+        # refine relation representation with relation type representation ############
+        rel_type_rep = self.refine_prompt(
+            rel_type_rep, candidate_pair_rep, relation_type_mask, candidate_pair_mask
+        )
+        ################################################################################
+
 
         # similarity score
-        scores = self.scorer(span_rep, entity_type_rep) # ([B, num_pairs, num_classes])
+        scores = self.scorer(rel_rep, entity_type_rep) # ([B, num_pairs, num_classes])
 
         return scores, num_classes, entity_type_mask   #  see above, num_classes, ([B, num_classes])
 

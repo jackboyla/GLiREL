@@ -16,6 +16,7 @@ model_name: microsoft/deberta-v3-large # hugging face model
 fine_tune: true
 subtoken_pooling: first
 hidden_size: 768
+scorer: "dot"
 span_mode: marker
 dropout: 0.4
 scheduler: "cosine_with_warmup"  # "cosine_with_hard_restarts"

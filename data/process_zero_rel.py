@@ -65,13 +65,17 @@ def transform_zero_rel(data):
 
         for pair, relation_text in zip(data['ents'][i], data['generation'][i]):
 
+            ## NOTE: spacy will index entities [start(inclusive), end(exclusive)]
+            # e.g ["The", "quick", "brown", "fox"] --> "quick" is [1, 2]
+            # Our model expects [start(inclusive), end(inclusive)], hence the -1
+
             # Add head 
             head = pair[0]['head']
-            head_start, head_end, head_type, head_text = int(head[0]), int(head[1]), head[2], head[3]
+            head_start, head_end, head_type, head_text = int(head[0]), int(head[1]) - 1, head[2], head[3]
             
             # Add tail entity
             tail = pair[0]['tail']
-            tail_start, tail_end, tail_type, tail_text = int(tail[0]), int(tail[1]), tail[2], tail[3]
+            tail_start, tail_end, tail_type, tail_text = int(tail[0]), int(tail[1]) - 1, tail[2], tail[3]
             
             # Add relation
             relations.append({
