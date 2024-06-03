@@ -7,7 +7,7 @@ from typing import Dict, Optional, Union
 import torch
 import torch.nn.functional as F
 import yaml
-from glirel.modules.layers import LstmSeq2SeqEncoder
+from glirel.modules.layers import LstmSeq2SeqEncoder, ScorerLayer
 from glirel.modules.base import InstructBase
 from glirel.modules.evaluator import Evaluator, greedy_search, RelEvaluator
 from glirel.modules.span_rep import SpanRepLayer
@@ -68,6 +68,9 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
             nn.ReLU(),
             nn.Linear(config.hidden_size * 4, config.hidden_size)
         )
+
+        # scoring layer
+        self.scorer = ScorerLayer(scoring_type=config.scorer, hidden_size=config.hidden_size, dropout=config.dropout)
 
     def get_optimizer(self, lr_encoder, lr_others, freeze_token_rep=False):
         """
@@ -176,7 +179,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         num_classes = entity_type_rep.shape[1]                    # number of entity types
 
         # similarity score
-        scores = torch.einsum('BKD,BCD->BKC', span_rep, entity_type_rep) # ([B, num_pairs, num_classes])
+        scores = self.scorer(span_rep, entity_type_rep) # ([B, num_pairs, num_classes])
 
         return scores, num_classes, entity_type_mask   #  see above, num_classes, ([B, num_classes])
 
@@ -276,7 +279,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         span_rep = self.span_rep_layer(word_rep, span_idx)
 
         # scores
-        local_scores = torch.einsum('BKD,BCD->BKC', span_rep, entity_type_rep) # ([B, num_pairs, num_classes])
+        local_scores = self.scorer(span_rep, entity_type_rep) # ([B, num_pairs, num_classes])
         
 
         return local_scores
