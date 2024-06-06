@@ -53,8 +53,6 @@ def get_relation_with_span(x):
             relation_with_span[i].append(act)
     return relation_with_span
 
-def get_ground_truth_relations(x, candidate_spans_idx, candidate_span_label):
-    x['rel_label']
 
 def get_ground_truth_relations(x, candidate_spans_idx, candidate_span_label):
     B, max_top_k = candidate_span_label.shape
