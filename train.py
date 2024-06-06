@@ -402,10 +402,10 @@ def main(args):
 
     if config.train_data.endswith('.jsonl'):
         with open(config.train_data, 'r') as f:
-            # data = [json.loads(line) for line in f]
-            data = []
-            for i in range(1_000):
-                data.append(json.loads(next(f)))
+            data = [json.loads(line) for line in f]
+            # data = []
+            # for i in range(1_000):
+                # data.append(json.loads(next(f)))
     elif config.train_data.endswith('.json'):
         with open(config.train_data, 'r') as f:
             data = json.load(f)
@@ -483,8 +483,9 @@ def main(args):
     num_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"Number of trainable parameters: {num_trainable_params} / {num_params}")
 
-    if torch.cuda.is_available():
-        model = model.to('cuda')
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    use_amp = device != 'cpu' 
+    model = model.to(device)
 
     lr_encoder = float(config.lr_encoder)
     lr_others = float(config.lr_others)
@@ -498,12 +499,10 @@ def main(args):
         {'params': model.prompt_rep_layer.parameters(), 'lr': lr_others},
     ])
 
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
 
     train(model, optimizer, data, config, eval_data=eval_data, num_steps=config.num_steps, eval_every=config.eval_every, top_k=config.top_k,
           log_dir=config.log_dir, wandb_log=args.wandb_log, wandb_sweep=args.wandb_sweep, warmup_ratio=config.warmup_ratio, train_batch_size=config.train_batch_size,
-          device=device)
+          device=device, use_amp=use_amp)
 
 
 if __name__ == "__main__":
