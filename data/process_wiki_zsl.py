@@ -4,7 +4,13 @@ random.seed(12)
 
 NUM_EXAMPLES = 'all'
 
-# curl -L -o wiki_all.json 'https://drive.google.com/uc?export=download&id=1ELFGUIYDClmh9GrEHjFYoE_VI1t2a5nK'
+import gdown
+
+print("Downloading Wiki_ZSL dataset...")
+url = 'https://drive.google.com/uc?id=1ELFGUIYDClmh9GrEHjFYoE_VI1t2a5nK'
+output = 'wiki_all.json'
+gdown.download(url, output, quiet=False)
+
 
 with open('wiki_all.json', 'r') as f:    # len --> 93483
     dataset = json.load(f)
