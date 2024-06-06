@@ -19,17 +19,6 @@ for dataset_name in ["jackboyla/ZeroRel", 'jackboyla/gone_and_growned_my_own_dat
 print("Loaded datasets! Transforming...")
 ds = ds.shuffle(seed=SEED)
 
-# print("Asserting there's no duplicates... Removing if found...")
-# seen_texts = set()
-# selection_idx = []
-# for i in tqdm(range(len(ds))):
-#     if ds[i]['text'][0] not in seen_texts:
-#         seen_texts.add(ds[i]['text'][0])
-#         selection_idx.append(i)
-# print(f"Found {len(ds) - len(selection_idx)} duplicates! :(")
-
-# data = ds.select(selection_idx)
-
 
 def parse_generated_label(label: str):
 
@@ -67,7 +56,7 @@ def transform_zero_rel(data):
 
             ## NOTE: spacy will index entities [start(inclusive), end(exclusive)]
             # e.g ["The", "quick", "brown", "fox"] --> "quick" is [1, 2]
-            # Our model expects [start(inclusive), end(inclusive)], hence the -1
+            # Our model expects [start(inclusive), end(inclusive)], hence the -1's below
 
             # Add head 
             head = pair[0]['head']
