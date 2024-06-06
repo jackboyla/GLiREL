@@ -6,7 +6,7 @@ lr_others: 1e-4
 num_steps: 100000
 warmup_ratio: 0.1
 train_batch_size: 1
-eval_every: 3000
+eval_every: 1000
 gradient_accumulation: 8   # null
 eval_batch_size: 32
 
@@ -18,6 +18,9 @@ subtoken_pooling: first
 hidden_size: 768
 scorer: "dot"
 span_mode: marker
+refine_prompt: true
+refine_relation: true
+ffn_mul: 4
 dropout: 0.4
 scheduler: "cosine_with_warmup"  # "cosine_with_hard_restarts"
 loss_func: "binary_cross_entropy_loss"  # "binary_cross_entropy_loss"  # "focal_loss"

@@ -18,6 +18,9 @@ subtoken_pooling: first
 hidden_size: 768
 scorer: "dot"
 span_mode: marker
+refine_prompt: true
+refine_relation: true
+ffn_mul: 4
 dropout: 0.4
 scheduler: "cosine_with_warmup"  # "cosine_with_hard_restarts"
 loss_func: "binary_cross_entropy_loss"  # "binary_cross_entropy_loss"  # "focal_loss"
