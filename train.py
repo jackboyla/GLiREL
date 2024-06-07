@@ -404,8 +404,8 @@ def main(args):
         with open(config.train_data, 'r') as f:
             data = [json.loads(line) for line in f]
             # data = []
-            # for i in range(1_000):
-                # data.append(json.loads(next(f)))
+            # for i in range(50_000):
+            #     data.append(json.loads(next(f)))
     elif config.train_data.endswith('.json'):
         with open(config.train_data, 'r') as f:
             data = json.load(f)
@@ -498,6 +498,8 @@ def main(args):
         {'params': model.span_rep_layer.parameters(), 'lr': lr_others},
         {'params': model.prompt_rep_layer.parameters(), 'lr': lr_others},
     ])
+
+    logger.info(f"Using config: \n{json.dumps(config.__dict__, indent=2)}\n\n")
 
 
     train(model, optimizer, data, config, eval_data=eval_data, num_steps=config.num_steps, eval_every=config.eval_every, top_k=config.top_k,
