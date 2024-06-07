@@ -237,7 +237,7 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
     best_f1 = 0
 
     accumulated_steps = 0 
-
+    start = time.time()
     for step in pbar:
         try:
             x = next(iter_train_loader)
@@ -304,6 +304,9 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
             )
 
         if (step + 1) % eval_every == 0:
+            end = time.time()
+            logger.info(f"Time taken for {eval_every} steps: {end - start} seconds")
+            start = time.time() # reset timer
 
             model.eval()
 
