@@ -198,7 +198,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
         # refine relation representation ##############################################
         relation_classes = x['rel_label']  # [B, num_entity_pairs]
-        rel_rep_mask = relation_classes > -1
+        rel_rep_mask = relation_classes > 0 # -1
         ################################################################################
 
         if hasattr(self, "refine_relation"):
@@ -312,6 +312,8 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
         rel_type_rep = self.prompt_rep_layer(rel_type_rep)  # (batch_size, len_types, hidden_size)
         batch_size, num_classes = rel_type_rep.shape[0], rel_type_rep.shape[1]
+        # make rel_type_mask all ones of shape (B, num_classes)
+        rel_type_mask = torch.ones(batch_size, num_classes).to(device)
 
         word_rep = self.rnn(word_rep, mask)
         rel_rep = self.span_rep_layer(word_rep, span_idx)
@@ -327,10 +329,6 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
             rel_rep = self.refine_relation(
                 rel_rep, word_rep, rel_rep_mask, mask
             )
-
-        # make rel_type_mask all True of shape rel_type_rep (B, num_classes)
-        rel_type_mask = torch.ones(batch_size, num_classes, dtype=torch.bool).to(device)
-
 
         if hasattr(self, "refine_prompt"):
             # refine relation representation with relation type representation ############
