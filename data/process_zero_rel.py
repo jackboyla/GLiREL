@@ -156,4 +156,4 @@ for item in tqdm(data):
 with open(save_path, 'w') as f:
     for item in data:
         f.write(json.dumps(item) + '\n')
-
+print(f"Saved to {save_path}")
