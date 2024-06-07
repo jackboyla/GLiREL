@@ -4,9 +4,11 @@ This guide collects the steps we do in GLiREL to make a release on PyPI. They re
 
 ### Preparation
 
-To be able to make a release for a given project, you’ll need an account on [PyPI](https://pypi.org/) and on [Test PyPI](https://test.pypi.org/). If you are making a release for an existing project, your username will need to be added to that project by one of the current maintainers on PyPI. Note that we strongly recommend enabling two-factor authentication on PyPI.
+```bash
+pip install build twine
+```
 
-You will also need to install twine in your Python environment with `pip install twine`.
+To be able to make a release for a given project, you’ll need an account on [PyPI](https://pypi.org/) and on [Test PyPI](https://test.pypi.org/). If you are making a release for an existing project, your username will need to be added to that project by one of the current maintainers on PyPI. Note that we strongly recommend enabling two-factor authentication on PyPI.
 
 Additionally, it can be nice to familiarize yourself with [Semantic Versioning](https://semver.org/). This is a fairly strict document, but it provides a useful summary that library maintainers should follow:
 
@@ -90,7 +92,9 @@ To upload it:
 twine upload dist/* -r pypitest --repository-url=https://test.pypi.org/legacy/
 ```
 
-You will be prompted for your username and password. If that doesn't work, you can create an API Token for your Test PyPI account and create a `~/.pypirc` account if it doesn't already exist, with:
+You will be prompted for your username and password. 
+
+If that doesn't work, you can create an API Token for your Test PyPI account and create a `~/.pypirc` account if it doesn't already exist, with:
 
 ```
 [distutils]
@@ -113,7 +117,7 @@ Once that has uploaded the package, in a fresh environment containing all depend
 
 ```bash
 python -m pip install torch transformers huggingface_hub flair seqeval tqdm
-python -m pip install -i https://testpypi.python.org/pypi glirel
+python -m pip install -i https://test.pypi.org/simple/ glirel
 ```
 
 If everything works, you should be able to run this code:
