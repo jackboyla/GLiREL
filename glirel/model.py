@@ -167,8 +167,8 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         mask_w_prompt = bert_output["mask"]  # mask for all tokens (with prompt)
 
         # get word representation (after [SEP]), mask (after [SEP]) and entity type representation (before [SEP])
-        word_rep = []  # word representation (after [SEP])
-        mask = []  # mask (after [SEP])
+        word_rep = []      # word representation (after [SEP])
+        mask = []          # mask (after [SEP])
         rel_type_rep = []  # entity type representation (before [SEP])
         for i in range(len(x['tokens'])):
             prompt_entity_length = all_len_prompt[i]  # length of prompt for this example
@@ -183,17 +183,17 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
             rel_type_rep.append(relation_rep)
 
         # padding for word_rep, mask and rel_type_rep
-        word_rep = pad_sequence(word_rep, batch_first=True)                # [batch_size, seq_len, hidden_size]
-        mask = pad_sequence(mask, batch_first=True)                        # [batch_size, seq_len]
-        rel_type_rep = pad_sequence(rel_type_rep, batch_first=True)  # [batch_size, len_types, hidden_size]
+        word_rep = pad_sequence(word_rep, batch_first=True)          # [B, seq_len, D]
+        mask = pad_sequence(mask, batch_first=True)                  # [B, seq_len]
+        rel_type_rep = pad_sequence(rel_type_rep, batch_first=True)  # [B, len_types, D]
 
         # compute span representation
         word_rep = self.rnn(word_rep, mask)                  # ([B, seq_length, D])
         rel_rep = self.span_rep_layer(word_rep, span_idx)    # ([B, num_pairs, D])
 
         # compute final entity type representation (FFN)
-        rel_type_rep = self.prompt_rep_layer(rel_type_rep)  # (batch_size, len_types, hidden_size)
-        num_classes = rel_type_rep.shape[1]                 # number of relation types
+        rel_type_rep = self.prompt_rep_layer(rel_type_rep)   # (B, len_types, D)
+        num_classes = rel_type_rep.shape[1]                  # number of relation types
 
 
         # refine relation representation ##############################################
@@ -201,13 +201,13 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         rel_rep_mask = relation_classes > -1
         ################################################################################
 
-        if hasattr(self.config, "refine_relation") and self.config.refine_relation:
+        if hasattr(self, "refine_relation"):
             # refine relation representation
             rel_rep = self.refine_relation(
                 rel_rep, word_rep, rel_rep_mask, mask
             )
 
-        if hasattr(self.config, "refine_prompt") and self.config.refine_prompt:
+        if hasattr(self, "refine_prompt"):
             # refine relation representation with relation type representation ############
             rel_type_rep = self.refine_prompt(
                 rel_type_rep, rel_rep, rel_type_mask, rel_rep_mask
@@ -218,7 +218,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         # similarity score
         scores = self.scorer(rel_rep, rel_type_rep) # ([B, num_pairs, num_classes])
 
-        return scores, num_classes, rel_type_mask   #  see above, num_classes, ([B, num_classes])
+        return scores, num_classes, rel_type_mask   # ([B, num_pairs, num_classes]), num_classes, ([B, num_classes])
 
     def forward(self, x):
         # compute span representation
@@ -311,12 +311,37 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         rel_type_rep = rel_type_rep[:, 0::2, :]
 
         rel_type_rep = self.prompt_rep_layer(rel_type_rep)  # (batch_size, len_types, hidden_size)
+        batch_size, num_classes = rel_type_rep.shape[0], rel_type_rep.shape[1]
 
         word_rep = self.rnn(word_rep, mask)
-        span_rep = self.span_rep_layer(word_rep, span_idx)
+        rel_rep = self.span_rep_layer(word_rep, span_idx)
+
+
+        # refine relation representation ##############################################
+        relation_classes = x['rel_label']  # [B, num_entity_pairs]
+        rel_rep_mask = relation_classes > -1
+        ################################################################################
+
+        if hasattr(self, "refine_relation"):
+            # refine relation representation
+            rel_rep = self.refine_relation(
+                rel_rep, word_rep, rel_rep_mask, mask
+            )
+
+        # make rel_type_mask all True of shape rel_type_rep (B, num_classes)
+        rel_type_mask = torch.ones(batch_size, num_classes, dtype=torch.bool).to(device)
+
+
+        if hasattr(self, "refine_prompt"):
+            # refine relation representation with relation type representation ############
+            rel_type_rep = self.refine_prompt(
+                rel_type_rep, rel_rep, rel_type_mask, rel_rep_mask
+            )
+        ################################################################################
+
 
         # scores
-        local_scores = self.scorer(span_rep, rel_type_rep) # ([B, num_pairs, num_classes])
+        local_scores = self.scorer(rel_rep, rel_type_rep) # ([B, num_pairs, num_classes])
         
 
         return local_scores
