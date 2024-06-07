@@ -37,6 +37,8 @@ def parse_generated_label(label: str):
     label = label.strip()
     label = label.split(' ')[0]
     label = label.replace('_', " ")
+    label = label.strip()
+
     return label
 
 
@@ -45,7 +47,12 @@ def transform_zero_rel(data):
     transformed_data = []
 
     for i in tqdm(range(len(data['text']))):
-        ner_entries = ([[int(ent[0]), int(ent[1]), ent[2], ent[3]] for ent in data['ner'][i]])
+
+        ## NOTE: spacy will index entities [start(inclusive), end(exclusive)]
+        # e.g ["The", "quick", "brown", "fox"] --> "quick" is [1, 2]
+        # Our model expects [start(inclusive), end(inclusive)], hence the -1's below
+
+        ner_entries = ([[int(ent[0]), int(ent[1]) - 1, ent[2], ent[3]] for ent in data['ner'][i]])
         relations = []
         tokens = data['tokenized_text'][i][0]
         seen_rels = set()
@@ -53,10 +60,6 @@ def transform_zero_rel(data):
         assert len(data['generation'][i]) == len(data['ents'][i])
 
         for pair, relation_text in zip(data['ents'][i], data['generation'][i]):
-
-            ## NOTE: spacy will index entities [start(inclusive), end(exclusive)]
-            # e.g ["The", "quick", "brown", "fox"] --> "quick" is [1, 2]
-            # Our model expects [start(inclusive), end(inclusive)], hence the -1's below
 
             # Add head 
             head = pair[0]['head']
@@ -71,20 +74,22 @@ def transform_zero_rel(data):
                 "head": {"mention": head_text, "position": [head_start, head_end], "type": head_type},
                 "tail": {"mention": tail_text, "position": [tail_start, tail_end], "type": tail_type},
                 "relation_text": parse_generated_label(relation_text),
+                "raw_relation_text": relation_text,
             })
             seen_rels.add(((head_start, head_end), (tail_start, tail_end)))
 
         # fill empty relations with "no relation"
-        for head_start, head_end, head_type, head_text in ner_entries:
-            # head_start, head_end, head_type, head_text = int(ent1[0]), int(ent1[1]), ent1[2], ent1[3]
-            for tail_start, tail_end, tail_type, tail_text in ner_entries:
-                # tail_start, tail_end, tail_type, tail_text = int(ent2[0]), int(ent2[1]), ent2[2], ent2[3]
+        for head in ner_entries:
+            head_start, head_end, head_type, head_text = int(head[0]), int(head[1]), head[2], head[3]
+            for tail in ner_entries:
+                tail_start, tail_end, tail_type, tail_text = int(tail[0]), int(tail[1]), tail[2], tail[3]
 
                 if (head_start, head_end) != (tail_start, tail_end) and ((head_start, head_end), (tail_start, tail_end)) not in seen_rels:
                     relations.append({
                         "head": {"mention": head_text, "position": [head_start, head_end], "type": head_type},
                         "tail": {"mention": tail_text, "position": [tail_start, tail_end], "type": tail_type},
-                        "relation_text": parse_generated_label(relation_text),
+                        "relation_text": "no relation",
+                        "raw_relation_text": "no relation",
                     })
 
         transformed_data.append({
@@ -96,7 +101,8 @@ def transform_zero_rel(data):
     return transformed_data
 
 
-with open('./zero_rel_all.jsonl', 'w') as f:
+save_path = './zero_rel_all.jsonl'
+with open(save_path, 'w') as f:
     step_size = 10_000
     for step in range(0, len(ds), step_size):
         end = min(step + step_size, len(ds))
@@ -106,4 +112,48 @@ with open('./zero_rel_all.jsonl', 'w') as f:
 
         for item in transformed_data:
             f.write(json.dumps(item) + '\n')
+print(f"Saved to {save_path}")
+
+
+# post processing #########################
+print("Post processing...")
+print(f"Assigning 'no relation' label to relations with troublesome labels... (see process_zero_rel.py)")
+
+with open(save_path, 'r') as f:
+    data = [json.loads(line) for line in f]
+
+relationship_counts = {}
+raw_relationship_string = {}
+
+for item in data:
+    relations = item['relations']
+    for relation in relations:
+        relation_text = relation['relation_text']
+        if relation_text in relationship_counts:
+            relationship_counts[relation_text] += 1
+        else:
+            relationship_counts[relation_text] = 1
+
+        raw_relation = relation['raw_relation_text']
+        if relation_text not in raw_relationship_string:
+            raw_relationship_string[relation_text] = set()
+        raw_relationship_string[relation_text].add(relation['raw_relation_text'])
+
+
+for item in tqdm(data):
+    relations = item['relations']
+    for relation in relations:
+        rel_text = relation['relation_text']
+        if len(rel_text) < 4 and relationship_counts[rel_text] < 200:
+            relation['relation_text'] = 'no relation'
+        elif len(rel_text) < 2:
+            relation['relation_text'] = 'no relation'
+        elif relationship_counts[rel_text] < 10:
+            relation['relation_text'] = 'no relation'
+########################################
+    
+
+with open(save_path, 'w') as f:
+    for item in data:
+        f.write(json.dumps(item) + '\n')
 
