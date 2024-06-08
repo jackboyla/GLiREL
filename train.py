@@ -278,7 +278,8 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
             logger.error(f"Num candidate classes: {[len(x['classes_to_id'][i]) for i in range(len(x['classes_to_id']))]}")
             continue
 
-        logger.info(f"Step {step} | loss: {loss.item()} | x['rel_label']: {x['rel_label'].shape} | x['span_idx']: {x['span_idx'].shape} | x['tokens']: {[len(x['tokens'][i]) for i in range(len(x['tokens']))]} | num candidate_classes: {len(x['classes_to_id'][0].keys())}")
+        num_tokens = [len(x['tokens'][i]) for i in range(len(x['tokens']))]
+        logger.info(f"Step {step} | loss: {loss.item()} | x['rel_label']: {x['rel_label'].shape} | x['span_idx']: {x['span_idx'].shape} | x['tokens']: {num_tokens} | num candidate_classes: {len(x['classes_to_id'][0].keys())}")
 
         accumulated_steps += 1
         if config.gradient_accumulation is None or (accumulated_steps % config.gradient_accumulation == 0):
@@ -293,7 +294,11 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
         description = f"step: {step} | epoch: {step // len(train_loader)} | loss: {loss.item():.2f}"
 
         if run is not None:
-            run.log({"loss": loss.item()})
+            run.log({
+                "loss": loss.item(), 
+                "num_relations": x['rel_label'].shape[1], 
+                "num_tokens": max(num_tokens)
+            })
 
         elif wandb_sweep:
             wandb.log(
