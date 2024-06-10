@@ -6,7 +6,7 @@ lr_others: 1e-4
 num_steps: 100000
 warmup_ratio: 0.1
 train_batch_size: 1
-eval_every: 1000
+eval_every: 3000
 gradient_accumulation: 8   # null
 eval_batch_size: 32
 
@@ -16,10 +16,10 @@ model_name: microsoft/deberta-v3-large # hugging face model
 fine_tune: true
 subtoken_pooling: first
 hidden_size: 768
-scorer: "dot"
+scorer: "dot" # "dot_norm" # "dot"
 span_mode: marker
-refine_prompt: true
-refine_relation: true
+refine_prompt: false
+refine_relation: false
 ffn_mul: 4
 dropout: 0.4
 scheduler: "cosine_with_warmup"  # "cosine_with_hard_restarts"
@@ -43,7 +43,7 @@ num_unseen_rel_types: 15   # 15
 top_k: 1                  # number of relations predictions to return at evaluation time
 random_drop: false       # randomly drop relation types
 max_len: 384
-eval_threshold: 0.1
+eval_threshold: 0.001
 
 name: "large"
 

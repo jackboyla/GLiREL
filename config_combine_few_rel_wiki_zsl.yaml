@@ -28,7 +28,7 @@ loss_func: "binary_cross_entropy_loss"  # "binary_cross_entropy_loss"  # "focal_
 # gamma: 2
 
 # Directory Paths
-dataset_name: "few_rel"
+dataset_name: "combine_few_rel_wiki_zsl"
 root_dir: ablation_backbone
 train_data: ["data/few_rel_all.jsonl", "data/wiki_zsl_all.jsonl"]
 
