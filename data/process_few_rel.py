@@ -1,24 +1,13 @@
 from datasets import load_dataset, concatenate_datasets
 import json
 
-NUM_TRAIN_EXAMPLES = 'all'
-NUM_EVAL_EXAMPLES = 'all'
-
 dataset = load_dataset("few_rel")    # features: ['relation', 'tokens', 'head', 'tail', 'names'],
 ds_train = dataset['train_wiki'].shuffle(seed=42)
 ds_val = dataset['val_wiki'].shuffle(seed=42)
 ds = concatenate_datasets([ds_train, ds_val])
 print(f"Number of examples: {len(ds)}")
 
-# for i in range(15): 
-#     rel_texts = [rel for rel in ds[i]['names'][i]]
-#     print(f"Relation: {rel_texts}")
-
-if type(NUM_TRAIN_EXAMPLES) is int:
-    data = ds.select(range(NUM_TRAIN_EXAMPLES))
-else:
-    data = ds
-data = data.to_dict()
+data = ds.to_dict()
 
 '''
 one relation, two entities
@@ -48,13 +37,13 @@ def transform_few_rel(data):
         relation_text = data['names'][i][0]
 
         # Add head entity
-        head_start, head_end = head['indices'][0][0], head['indices'][0][-1] + 1
-        head_text = " ".join(tokens[head_start:head_end])
+        head_start, head_end = head['indices'][0][0], head['indices'][0][-1]
+        head_text = " ".join(tokens[head_start:head_end+1])
         ner_entries.append([head_start, head_end, head['type'], head_text])
         
         # Add tail entity
-        tail_start, tail_end = tail['indices'][0][0], tail['indices'][0][-1] + 1
-        tail_text = " ".join(tokens[tail_start:tail_end])
+        tail_start, tail_end = tail['indices'][0][0], tail['indices'][0][-1]
+        tail_text = " ".join(tokens[tail_start: tail_end+1])
         ner_entries.append([tail_start, tail_end, tail['type'], tail_text])
         
         # Add relation
@@ -75,6 +64,8 @@ def transform_few_rel(data):
 
 transformed_data = transform_few_rel(data)
 
-with open('./few_rel_all.jsonl', 'w') as f:
+save_path = './few_rel_all.jsonl'
+with open(save_path, 'w') as f:
     for item in transformed_data:
         f.write(json.dumps(item) + '\n')
+print(f"Saved data to {save_path}")
