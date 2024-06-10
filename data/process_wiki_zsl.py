@@ -1,15 +1,15 @@
 import json
 import random
+import os
 random.seed(12)
-
-NUM_EXAMPLES = 'all'
 
 import gdown
 
-print("Downloading Wiki_ZSL dataset...")
 url = 'https://drive.google.com/uc?id=1ELFGUIYDClmh9GrEHjFYoE_VI1t2a5nK'
 output = 'wiki_all.json'
-gdown.download(url, output, quiet=False)
+if not os.path.exists(output):
+    print("Downloading Wiki_ZSL dataset...")
+    gdown.download(url, output, quiet=False)
 
 
 with open('wiki_all.json', 'r') as f:    # len --> 93483
@@ -20,7 +20,7 @@ with open('all_wikidata_properties.json', 'r') as f:
     pid2name = {}
     for property in properties:
         pid = property['property'].split('/')[-1]
-        pid2name[pid] = property['propertyLabel']
+        pid2name[pid] = [property['propertyLabel']]
 
 pid2name.update(json.load(open('pid2name_fewrel.json')))
 pid2name.update(json.load(open('pid2name_wiki.json')))
@@ -40,11 +40,7 @@ pid2name['P9'] = ["sibling", "the subject and the object have at least one commo
 }
 '''
 
-
-if type(NUM_EXAMPLES) is int:
-    data = dataset[:NUM_EXAMPLES]
-else:
-    data = dataset
+data = dataset
 
 '''
 
@@ -83,8 +79,8 @@ def transform_wiki_zsl(dataset):
         for vertex in data['vertexSet']:
             if vertex.get('tokenpositions'):
                 start = vertex['tokenpositions'][0]
-                end = vertex['tokenpositions'][-1] + 1  # Include last token
-                entity_text = " ".join(tokens[start:end])
+                end = vertex['tokenpositions'][-1]
+                entity_text = " ".join(tokens[start:end + 1])
                 ner_entries.append([start, end, vertex['type'], entity_text])
             else:
                 problem_entities.append(vertex)
@@ -110,8 +106,6 @@ def transform_wiki_zsl(dataset):
         # Prepare to collect relations
         relations = []
         for edge in data['edgeSet']:
-            if edge['kbID'] == 'P0':  # Skip P0 (None) relations
-                continue
             if len(edge['left']) == 0 or len(edge['right']) == 0: # Skip relations with no positions
                 problem_relations.append(edge)
                 continue
@@ -119,15 +113,17 @@ def transform_wiki_zsl(dataset):
                 print('Relation not found:', edge['kbID'])
                 continue
             head_start = edge['left'][0]
-            head_end = edge['left'][-1] + 1
+            head_end = edge['left'][-1]
             tail_start = edge['right'][0]
-            tail_end = edge['right'][-1] + 1
-            head_text = " ".join(tokens[head_start:head_end])
-            tail_text = " ".join(tokens[tail_start:tail_end])
+            tail_end = edge['right'][-1]
+            head_text = " ".join(tokens[head_start:head_end + 1]) # +1 to include last token
+            tail_text = " ".join(tokens[tail_start:tail_end + 1])
 
             # Find and append relation
+            if len(pid2name[edge['kbID']][0]) < 2:
+                import ipdb; ipdb.set_trace()
             relations.append({
-                "head": {"mention": head_text, "position": [head_start, head_end], "type": find_type_by_position(data, head_start, head_end)},
+                "head": {"mention": head_text, "position": [head_start, head_end], "type": find_type_by_position(data, head_start, head_end)}, # +1 to include last token
                 "tail": {"mention": tail_text, "position": [tail_start, tail_end], "type": find_type_by_position(data, tail_start, tail_end)},
                 "relation_id": edge['kbID'],
                 "relation_text": pid2name[edge['kbID']][0],
@@ -135,8 +131,8 @@ def transform_wiki_zsl(dataset):
 
         # ensure that all positions in relations exist in ner
         for relation in relations:
-            head_start, head_end = relation['head']['position']
-            tail_start, tail_end = relation['tail']['position']
+            head_start, head_end = relation['head']['position'][0], relation['head']['position'][1]
+            tail_start, tail_end = relation['tail']['position'][0], relation['tail']['position'][1]
             if not any([head_start == start and head_end == end for start, end, _, _ in ner_entries]):
                 print(f'Head not found in NER: {relation["head"]}')
                 problem_relations.append(relation)
@@ -163,7 +159,7 @@ def find_type_by_position(data, start, end):
 
     # try to find the entity using token positions
     for vertex in vertexSet:
-        if len(vertex['tokenpositions']) > 0 and vertex['tokenpositions'][0] == start and vertex['tokenpositions'][-1] + 1 == end:
+        if len(vertex['tokenpositions']) > 0 and vertex['tokenpositions'][0] == start and vertex['tokenpositions'][-1] == end:
             return vertex['type']
         
     # If not found by positions, try to match by lexicalInput
@@ -184,7 +180,8 @@ transformed_data = transform_wiki_zsl(data)
 # shuffle
 random.shuffle(transformed_data)
 
-with open('./wiki_zsl_all.jsonl', 'w') as f:
+save_path = './wiki_zsl_all.jsonl'
+with open(save_path, 'w') as f:
     for item in transformed_data:
         f.write(json.dumps(item) + '\n')
-
+print(f"Saved to {save_path}")
