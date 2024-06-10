@@ -17,7 +17,6 @@ else:
 
     DEFAULT_SPACY_CONFIG = {
         "model": "jackboyla/glirel_beta",
-        "labels": ["knows", "no relation", "part of", "related to", "same as"],
         "batch_size": 1,
         "device": None,
     }
@@ -31,9 +30,8 @@ else:
         nlp: Language,
         name: str, 
         model: str,
-        labels: List[str],
         batch_size: int,
         device: Optional[Union[str, torch.device]],
     ) -> "SpacyGLiRELWrapper":
         from glirel.spacy_integration import SpacyGLiRELWrapper
-        return SpacyGLiRELWrapper(model, labels=labels, batch_size=batch_size, device=device)
+        return SpacyGLiRELWrapper(model, batch_size=batch_size, device=device)
