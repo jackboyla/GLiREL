@@ -8,6 +8,7 @@ from spacy.tokens import Doc, Span
 from spacy.util import filter_spans, minibatch
 
 from glirel import GLiREL
+from glirel.modules.utils import constrain_relations_by_entity_type
 
 
 class SpacyGLiRELWrapper:
@@ -15,39 +16,44 @@ class SpacyGLiRELWrapper:
 
     Usage:
 
-    .. code-block:: diff
+        # Add the GLiREL component to the pipeline
+        >>> nlp.add_pipe("glirel", after="ner")
 
-         import spacy
+        # Now you can use the pipeline with the GLiREL component
+        >>> text = "Apple Inc. was founded by Steve Jobs, Steve Wozniak, and Ronald Wayne in April 1976. The company is headquartered in Cupertino, California."
 
-         nlp = spacy.load("en_core_web_sm")
-       + nlp.add_pipe("glirel", config={"model": "jackboyla/glirel_beta"})
+        >>> labels = {"glirel_labels": {
+            'co-founder': {"allowed_head": ["PERSON"], "allowed_tail": ["ORG"]}, 
+            'country of origin': {"allowed_head": ["PERSON", "ORG"], "allowed_tail": ["LOC", "GPE"]}, 
+            'licensed to broadcast to': {"allowed_head": ["ORG"]},  
+            'no relation': {},  
+            'parent': {"allowed_head": ["PERSON"], "allowed_tail": ["PERSON"]}, 
+            'followed by': {"allowed_head": ["PERSON", "ORG"], "allowed_tail": ["PERSON", "ORG"]},  
+            'located in or next to body of water': {"allowed_head": ["LOC", "GPE", "FAC"], "allowed_tail": ["LOC", "GPE"]},  
+            'spouse': {"allowed_head": ["PERSON"], "allowed_tail": ["PERSON"]},  
+            'child': {"allowed_head": ["PERSON"], "allowed_tail": ["PERSON"]},  
+            'founder': {"allowed_head": ["PERSON"], "allowed_tail": ["ORG"]},  
+            'founded on date': {"allowed_head": ["ORG"], "allowed_tail": ["DATE"]},
+            'headquartered in': {"allowed_head": ["ORG"], "allowed_tail": ["LOC", "GPE", "FAC"]},  
+            'acquired by': {"allowed_head": ["ORG"], "allowed_tail": ["ORG", "PERSON"]},  
+            'subsidiary of': {"allowed_head": ["ORG"], "allowed_tail": ["ORG", "PERSON"]}, 
+            }
+        }
 
-         text = '''Cleopatra VII, also known as Cleopatra the Great, was the last active ruler of the
-         Ptolemaic Kingdom of Egypt. She was born in 69 BCE and ruled Egypt from 51 BCE until her
-         death in 30 BCE.'''
-         doc = nlp(text)
+        >>> docs = list( nlp.pipe([(text, labels)], as_tuples=True) )
+        >>> relations = docs[0][0]._.relations
 
-    Example::
+        >>> sorted_data_desc = sorted(relations, key=lambda x: x['score'], reverse=True)
+        >>> print("\nDescending Order by Score:")
+        >>> for item in sorted_data_desc:
+            print(item)
 
-        >>> import spacy
-        >>> import span_marker
-        >>> nlp = spacy.load("en_core_web_sm")
-        >>> nlp.add_pipe("glirel", config={"model": "jackboyla/glirel_beta"})
-        >>> text = '''Cleopatra VII, also known as Cleopatra the Great, was the last active ruler of the
-        ... Ptolemaic Kingdom of Egypt. She was born in 69 BCE and ruled Egypt from 51 BCE until her
-        ... death in 30 BCE.'''
-        >>> doc = nlp(text)
-        >>> doc.ents
-        (Cleopatra VII, Cleopatra the Great, 69 BCE, Egypt, 51 BCE, 30 BCE)
-        >>> for span in doc.ents:
-        ...     print((span, span.label_))
-        (Cleopatra VII, 'PERSON')
-        (Cleopatra the Great, 'PERSON')
-        (69 BCE, 'DATE')
-        (Egypt, 'GPE')
-        (51 BCE, 'DATE')
-        (30 BCE, 'DATE')
-        >>> doc._.relations
+        >>> Descending Order by Score:
+        {'head_pos': [0, 2], 'tail_pos': [25, 26], 'head_text': ['Apple', 'Inc.'], 'tail_text': ['California'], 'label': 'headquartered in', 'score': 0.9854260683059692}
+        {'head_pos': [0, 2], 'tail_pos': [23, 24], 'head_text': ['Apple', 'Inc.'], 'tail_text': ['Cupertino'], 'label': 'headquartered in', 'score': 0.9569844603538513}
+        {'head_pos': [8, 10], 'tail_pos': [0, 2], 'head_text': ['Steve', 'Wozniak'], 'tail_text': ['Apple', 'Inc.'], 'label': 'co-founder', 'score': 0.09025496244430542}
+        {'head_pos': [5, 7], 'tail_pos': [0, 2], 'head_text': ['Steve', 'Jobs'], 'tail_text': ['Apple', 'Inc.'], 'label': 'co-founder', 'score': 0.08805803954601288}
+        {'head_pos': [12, 14], 'tail_pos': [0, 2], 'head_text': ['Ronald', 'Wayne'], 'tail_text': ['Apple', 'Inc.'], 'label': 'co-founder', 'score': 0.07996643334627151}
 
     """
 
@@ -55,7 +61,6 @@ class SpacyGLiRELWrapper:
         self,
         pretrained_model_name_or_path: Union[str, os.PathLike],
         *args,
-        labels: List[str],
         batch_size: int = 1,
         device: Optional[Union[str, torch.device]] = None,
         **kwargs,
@@ -72,35 +77,41 @@ class SpacyGLiRELWrapper:
                 Defaults to False.
         """
         self.model = GLiREL.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        self.labels = labels
         if device:
             self.model.to(device)
         elif torch.cuda.is_available():
             self.model.to("cuda")
         self.batch_size = batch_size
 
-
     def _set_relatons(self, doc: Doc, relations: List[Dict]):
         doc.set_extension("relations", default=None, force=True)
         doc._.relations = relations
         return doc
 
-    def __call__(self, doc: Doc, labels: List[str] = None) -> Doc:
-        # TODO: should chunk tokens if text too long?
-        if len(doc.ents) > 1: 
+    def __call__(self, doc: Doc) -> Doc:
+        if len(doc.ents) < 2: 
             print("The input text must contain at least two entities; skipping...")
+            doc = self._set_relatons(doc, relations=[])
             return doc
-        
-        if labels is None:
-            labels = self.labels
+
+        try:
+            labels = doc._context["glirel_labels"]
+        except Exception as e:
+            print("The labels must be passed as a context attribute eg, `nlp.pipe([(text, {'re_labels': ['father', ..]})], as_tuples=True)`")
+            raise e
+
+        if isinstance(labels, dict):
+            labels_and_constraints = labels
+            labels = list(labels.keys())
         
         tokens = [token.text for token in doc]
         ner = [[ent.start, (ent.end - 1), ent.label_, ent.text] for ent in doc.ents]
         relations = self.model.predict_relations(tokens, labels, threshold=0.0, ner=ner, top_k=1)
 
+        if isinstance(doc._context["glirel_labels"], list) is False:
+            relations = constrain_relations_by_entity_type(doc.ents, labels_and_constraints, relations)
 
         doc = self._set_relatons(doc, relations)
-
         return doc
 
     # def pipe(self, stream, batch_size=128):
