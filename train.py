@@ -408,30 +408,43 @@ def main(args):
 
     # Prep data
 
-    if config.train_data.endswith('.jsonl'):
-        with open(config.train_data, 'r') as f:
-            data = [json.loads(line) for line in f]
-            # data = []
-            # for i in range(50_000):
-            #     data.append(json.loads(next(f)))
-    elif config.train_data.endswith('.json'):
-        with open(config.train_data, 'r') as f:
-            data = json.load(f)
-    else:
-        raise ValueError(f"Invalid data format: {config.train_data}")
+    if isinstance(config.train_data, str):
+        config.train_data = [config.train_data]
+
+    train_data = []
+    for train_subset in config.train_data:
+        if train_subset.endswith('.jsonl'):
+            with open(train_subset, 'r') as f:
+                train_subset = [json.loads(line) for line in f]
+                # train_subset = []
+                # for i in range(50_000):
+                #     train_subset.append(json.loads(next(f)))
+        elif train_subset.endswith('.json'):
+            with open(train_subset, 'r') as f:
+                train_subset = json.load(f)
+        else:
+            raise ValueError(f"Invalid data format: {config.train_data}")
+        train_data.extend(train_subset)
+    data = train_data
 
 
 
     if hasattr(config, 'eval_data'):
 
-        if config.eval_data.endswith('.jsonl'):
-            with open(config.eval_data, 'r') as f:
-                eval_data = [json.loads(line) for line in f]
-        elif config.eval_data.endswith('.json'):
-            with open(config.eval_data, 'r') as f:
-                eval_data = json.load(f)
-        else:
-            raise ValueError(f"Invalid data format: {config.eval_data}. Must be .jsonl or .json")
+        if isinstance(config.eval_data, str):
+            config.eval_data = [config.eval_data]
+
+        eval_data = []
+        for eval_subset in config.train_data:
+            if eval_subset.endswith('.jsonl'):
+                with open(eval_subset, 'r') as f:
+                    eval_subset = [json.loads(line) for line in f]
+            elif eval_subset.endswith('.json'):
+                with open(eval_subset, 'r') as f:
+                    eval_subset = json.load(f)
+            else:
+                raise ValueError(f"Invalid data format: {config.eval_data}. Must be .jsonl or .json")
+            eval_data.extend(eval_subset)
 
     else:
         eval_data = None
