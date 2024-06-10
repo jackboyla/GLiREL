@@ -2,6 +2,24 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+def constrain_relations_by_entity_type(ents, labels, relations):
+    '''
+    relations: {'head_pos': [15, 17], 'tail_pos': [25, 26], 'head_text': ['April', '1976'], 'tail_text': ['California'], 'label': 'headquartered in', 'score': 0.9820516705513}
+    labels: {'father': {'allowed_head': ['PERSON'], 'allowed_tail': ['PERSON']}}
+    '''
+    ner = {(ent.start, ent.end): ent.label_ for ent in ents}
+    rel_types = list(labels.keys())
+    constrained_relations = []
+    for relation in relations:
+        head_label = ner[(relation['head_pos'][0], relation['head_pos'][1])]
+        tail_label = ner[(relation['tail_pos'][0], relation['tail_pos'][1])]
+        if head_label in labels[relation['label']].get('allowed_head', rel_types) and tail_label in labels[relation['label']].get('allowed_tail', rel_types):
+            constrained_relations.append(relation)
+    
+    return constrained_relations
+
+
+# from EnriCo --> https://github.com/urchade/EnriCo/blob/main/modules/utils.py
 
 def down_weight_loss(logits, y, sample_rate=0.1, is_logit=True):
     rate = 1 - sample_rate
