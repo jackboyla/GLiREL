@@ -14,7 +14,6 @@ from glirel.modules.span_rep import SpanRepLayer
 from glirel.modules.rel_rep import RelRepLayer
 from glirel.modules.token_rep import TokenRepLayer
 from glirel.modules import loss_functions
-from glirel.modules.utils import get_ground_truth_relations, _get_candidates
 from torch import nn
 from torch.nn.utils.rnn import pad_sequence
 from huggingface_hub import PyTorchModelHubMixin, hf_hub_download
@@ -455,9 +454,10 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
             
             for (head_pos, tail_pos), pred_label, score in output:
 
+                # +1 to indices to restore spaCy tokenization
                 rel = {
-                    'head_pos' : head_pos,
-                    'tail_pos' : tail_pos,
+                    'head_pos' : [head_pos[0], head_pos[1]+1],
+                    'tail_pos' : [tail_pos[0], tail_pos[1]+1],
                     'head_text' : texts[i][head_pos[0]:head_pos[1]+1],
                     'tail_text' : texts[i][tail_pos[0]:tail_pos[1]+1],
                     'label': pred_label,
@@ -485,7 +485,8 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
             x['classes_to_id'] = x['classes_to_id'][0] if type(x['classes_to_id']) is list else x['classes_to_id']
             x['id_to_classes'] = x['id_to_classes'][0] if type(x['id_to_classes']) is list else x['id_to_classes']
             if i == 0:
-                logger.info(f"## Evaluation x['classes_to_id'] (showing first 15) --> {list(x['classes_to_id'].keys())[:15]}")
+                classes = list(x['classes_to_id'].keys())
+                logger.info(f"## Evaluation x['classes_to_id'] (showing 15/{len(classes)}) --> {classes[:15]}")
             ner = x['entities']
 
 
