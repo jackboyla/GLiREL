@@ -3,7 +3,7 @@ lr_encoder: 1e-5
 lr_others: 1e-4
 
 # Training Parameters
-num_steps: 100000
+num_steps: 200000
 warmup_ratio: 0.1
 train_batch_size: 1
 eval_every: 3000
