@@ -29,10 +29,10 @@ logging.basicConfig(level=logging.INFO,
 
 '''
 
-python train.py --config config_wiki_zsl.yaml
+python train.py --config configs/config_wiki_zsl.yaml
 
 
-python train.py --config config_few_rel.yaml
+python train.py --config configs/config_few_rel.yaml
 
 
 '''
@@ -144,7 +144,7 @@ def split_data_by_relation_type(data, num_unseen_rel_types):
     return train_data, test_data
 
     
-def dirty_split_data_by_relation_type(data, num_unseen_rel_types, max_test_size=3000):
+def dirty_split_data_by_relation_type(data, num_unseen_rel_types, max_test_size):
     '''
     This function does not care if the interesection of train and test relation types is empty.
     Used for custom datasets to avoid having a large number of eval classes (causes OOM), 
@@ -310,7 +310,7 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
 
         if (step + 1) % eval_every == 0:
             end = time.time()
-            logger.info(f"Time taken for {eval_every} steps: {end - start} seconds")
+            logger.info(f"Time taken for {eval_every} steps: {round(end - start)} seconds")
             start = time.time() # reset timer
 
             model.eval()
@@ -331,7 +331,7 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
                     logger.info('Evaluating...')
                     logger.info(f'Taking top k = {top_k} predictions for each relation...')
 
-                    results, f1 = model.evaluate(
+                    results, micro_f1, macro_f1 = model.evaluate(
                         eval_data, 
                         flat_ner=True, 
                         threshold=config.eval_threshold, 
@@ -344,23 +344,24 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
                         wandb.log(
                                 {
                                 "epoch": step // len(train_loader),
-                                "eval_f1": f1,
+                                "eval_micro_f1": micro_f1,
+                                "eval_macro_f1": macro_f1,
                             }
                         )
                     elif run is not None:
-                        run.log({"eval_f1": f1})
+                        run.log({"eval_f1_micro": micro_f1, "eval_macro_f1": macro_f1})
 
                     logger.info(f"Step={step}\n{results}")
                     
-
-                    saved_models.append((current_path, f1))
+                    
+                    saved_models.append((current_path, macro_f1))
                     if len(saved_models) > max_saves:
-                        saved_models.sort(key=lambda x: x[1], reverse=True)  # Sort models by F1 score
-                        lowest_f1_model = saved_models.pop()  # Remove the model with the lowest F1 score
+                        saved_models.sort(key=lambda x: x[1], reverse=True)  # Sort models by macro F1 score
+                        lowest_f1_model = saved_models.pop()  # Remove the model with the lowest macro F1 score
                         if lowest_f1_model[1] < best_f1:
                             shutil.rmtree(lowest_f1_model[0])  # Delete the model file if its score is the lowest
                         
-                        best_f1 = max(best_f1, f1)  # Update the best score
+                        best_f1 = max(best_f1, macro_f1)  # Update the best score
             
 
             model.train()
@@ -417,7 +418,7 @@ def main(args):
             with open(train_subset, 'r') as f:
                 train_subset = [json.loads(line) for line in f]
                 # train_subset = []
-                # for i in range(50_000):
+                # for i in range(1_000):
                 #     train_subset.append(json.loads(next(f)))
         elif train_subset.endswith('.json'):
             with open(train_subset, 'r') as f:
@@ -454,13 +455,12 @@ def main(args):
 
     if eval_data is None:
         if args.skip_splitting:
-            print("Skipping dataset splitting")
+            print("Skipping dataset splitting. Randomly splitting data into train and eval sets.")
             data = sorted(data, key=lambda x: len(x['relations']))
-            train_data = data
+            
         elif config.num_unseen_rel_types is not None:
-            # create eval set from train data
-            if config.dataset_name == 'zero_rel':
-                # train_data, eval_data = dirty_split_data_by_relation_type(data, config.num_unseen_rel_types)
+
+            if 'zero_rel' in config.dataset_name:
                 file_name = 'data/wiki_zsl_all.jsonl'
                 config.eval_data = file_name
                 with open(file_name, 'r') as f:
@@ -472,11 +472,8 @@ def main(args):
             else:
                 train_data, eval_data = split_data_by_relation_type(data, config.num_unseen_rel_types)
         else:
-            print("No unseen relation types specified. Randomly splitting data into train and eval sets.")
-            data = sorted(data, key=lambda x: len(x['relations']))
-            train_data, eval_data = train_test_split(data, test_size=5_000, random_state=42)
+            raise ValueError("No eval data provided and config.num_unseen_rel_types is None")
     else:
-        # _, eval_data = split_data_by_relation_type(eval_data, config.num_unseen_rel_types)
         eval_data = eval_data
         train_data = data
 
