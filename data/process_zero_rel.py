@@ -145,12 +145,15 @@ for item in tqdm(data):
     relations = item['relations']
     for relation in relations:
         rel_text = relation['relation_text']
+        # labels with less than 4 characters and less than 200 examples are reassigned
         if len(rel_text) < 4 and relationship_counts[rel_text] < 200:
             relation['relation_text'] = 'no relation'
             reassign_count += 1
+        # labels with less than 2 characters are reassigned
         elif len(rel_text) < 2:
             relation['relation_text'] = 'no relation'
             reassign_count += 1
+        # labels with less than 10 examples are reassigned
         elif relationship_counts[rel_text] < 10:
             relation['relation_text'] = 'no relation'
             reassign_count += 1
