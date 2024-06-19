@@ -9,7 +9,7 @@ import torch.nn.functional as F
 import yaml
 from glirel.modules.layers import LstmSeq2SeqEncoder, ScorerLayer, FilteringLayer, RefineLayer
 from glirel.modules.base import InstructBase
-from glirel.modules.evaluator import Evaluator, greedy_search, RelEvaluator
+from glirel.modules.evaluator import greedy_search, RelEvaluator
 from glirel.modules.span_rep import SpanRepLayer
 from glirel.modules.rel_rep import RelRepLayer
 from glirel.modules.token_rep import TokenRepLayer
@@ -251,6 +251,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
                 reduction='none'
             )
         elif self.config.loss_func == "focal_loss":
+            # might make it better at long-tail, but overall metrics may become worse
             all_losses = loss_functions.focal_loss_with_logits(
                 logits_label, 
                 labels_one_hot,
@@ -527,9 +528,9 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
                 
 
         evaluator = RelEvaluator(all_trues, all_preds)
-        out, f1 = evaluator.evaluate()
+        out, micro_f1, macro_f1 = evaluator.evaluate()
         
-        return out, f1
+        return out, micro_f1, macro_f1
 
 
     @classmethod

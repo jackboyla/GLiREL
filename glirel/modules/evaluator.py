@@ -45,70 +45,61 @@ def flatten_for_eval(y_true, y_pred):
     return all_true, all_pred
 
 
-def compute_prf(y_true, y_pred, average='micro'):
+def compute_prf(y_true, y_pred):
+    # macro will weight all classes equally, micro will weight all instances equally (regardless of class)
+    # ref (because I always forget) -> https://datascience.stackexchange.com/a/24051
     y_true, y_pred = flatten_for_eval(y_true, y_pred)
 
     pred_sum, tp_sum, true_sum, target_names = extract_tp_actual_correct(y_true, y_pred)
 
-    if average == 'micro':
-        tp_sum = np.array([tp_sum.sum()])
-        pred_sum = np.array([pred_sum.sum()])
-        true_sum = np.array([true_sum.sum()])
+        
+    # Macro averaging calculates the metrics for each class separately and then average them
+    macro_f_score, macro_recall, macro_precision = [], [], []
+    for i in range(len(tp_sum)):
+        p = _prf_divide(numerator=np.array([tp_sum[i]]), denominator=np.array([pred_sum[i]]), metric='precision', modifier='predicted', average='macro', warn_for=('precision',), zero_division='warn')
+        r = _prf_divide(numerator=np.array([tp_sum[i]]), denominator=np.array([true_sum[i]]), metric='recall', modifier='true', average='macro', warn_for=('recall',), zero_division='warn')
+        f = 2 * (p * r) / (p + r) if p + r != 0 else np.array([0])
+        macro_precision.append(p)
+        macro_recall.append(r)
+        macro_f_score.append(f)
+    macro_precision = [np.mean(macro_precision)]
+    macro_recall = [np.mean(macro_recall)]
+    macro_f_score = [np.mean(macro_f_score)]
 
-    precision = _prf_divide(
+
+    # Micro averaging is simply the total number of true positives, false positives, and false negatives
+    tp_sum = np.array([tp_sum.sum()])
+    pred_sum = np.array([pred_sum.sum()])
+    true_sum = np.array([true_sum.sum()])
+
+    micro_precision = _prf_divide(
         numerator=tp_sum,
         denominator=pred_sum,
         metric='precision',
         modifier='predicted',
-        average=average,
+        average='micro',
         warn_for=('precision', 'recall', 'f-score'),
         zero_division='warn'
     )
 
-    recall = _prf_divide(
+    micro_recall = _prf_divide(
         numerator=tp_sum,
         denominator=true_sum,
         metric='recall',
         modifier='true',
-        average=average,
+        average='micro',
         warn_for=('precision', 'recall', 'f-score'),
         zero_division='warn'
     )
 
-    denominator = precision + recall
+    denominator = micro_precision + micro_recall
     denominator[denominator == 0.] = 1
-    f_score = 2 * (precision * recall) / denominator
-
-    return {'precision': precision[0], 'recall': recall[0], 'f_score': f_score[0]}
+    micro_f_score = 2 * (micro_precision * micro_recall) / denominator
 
 
-class Evaluator:
-    def __init__(self, all_true, all_outs):
-        self.all_true = all_true
-        self.all_outs = all_outs
-
-    def get_entities_fr(self, ents):
-        all_ents = []
-        for s, e, lab in ents:
-            all_ents.append([lab, (s, e)])
-        return all_ents
-
-    def transform_data(self):
-        all_true_ent = []
-        all_outs_ent = []
-        for i, j in zip(self.all_true, self.all_outs):
-            e = self.get_entities_fr(i)
-            all_true_ent.append(e)
-            e = self.get_entities_fr(j)
-            all_outs_ent.append(e)
-        return all_true_ent, all_outs_ent
-
-    @torch.no_grad()
-    def evaluate(self):
-        all_true_typed, all_outs_typed = self.transform_data()
-        precision, recall, f1 = compute_prf(all_true_typed, all_outs_typed).values()
-        output_str = f"P: {precision:.2%}\tR: {recall:.2%}\tF1: {f1:.2%}\n"
-        return output_str, f1
+    return {'micro_precision': micro_precision[0], 'micro_recall': micro_recall[0], 'micro_f_score': micro_f_score[0],
+            'macro_precision': macro_precision[0], 'macro_recall': macro_recall[0], 'macro_f_score': macro_f_score[0],
+            }
 
 
 class RelEvaluator:
@@ -141,9 +132,10 @@ class RelEvaluator:
     @torch.no_grad()
     def evaluate(self):
         all_true_typed, all_outs_typed = self.transform_data()
-        precision, recall, f1 = compute_prf(all_true_typed, all_outs_typed).values()
-        output_str = f"P: {precision:.2%}\tR: {recall:.2%}\tF1: {f1:.2%}\n"
-        return output_str, f1
+        micro_precision, micro_recall, micro_f1, macro_precision, macro_recall, macro_f1 = compute_prf(all_true_typed, all_outs_typed).values()
+        output_str = f"Micro P: {micro_precision:.2%}\tMicro R: {micro_recall:.2%}\tMicro F1: {micro_f1:.2%}\n"
+        output_str += f"Macro P: {macro_precision:.2%}\tMacro R: {macro_recall:.2%}\tMacro F1: {macro_f1:.2%}\n"
+        return output_str, micro_f1, macro_f1
 
 
 def is_nested(idx1, idx2):
