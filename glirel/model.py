@@ -136,19 +136,19 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
             entity_prompt = []
             num_classes_all.append(len(all_types_i))
             # add enity types to prompt
-            for entity_type in all_types_i:
+            for relation_type in all_types_i:
                 entity_prompt.append(self.rel_token)     # [REL] token
-                entity_prompt.append(entity_type)        # entity type
+                entity_prompt.append(relation_type)        # relation type
             entity_prompt.append(self.sep_token)         # [SEP] token
 
             # prompt format:
-            # [ENT] entity_type [ENT] entity_type ... [ENT] entity_type [SEP]
+            # [REL] relation_type [REL] relation_type ... [REL] relation_type [SEP]
 
             # add prompt to the tokens
             tokens_p = entity_prompt + x['tokens'][i]
 
             # input format:
-            # [ENT] entity_type_1 [ENT] entity_type_2 ... [ENT] entity_type_m [SEP] token_1 token_2 ... token_n
+            # [REL] relation_type_1 [REL] relation_type_2 ... [REL] relation_type_m [SEP] token_1 token_2 ... token_n
 
             # update length of the sequence (add prompt length to the original length)
             new_length[i] = new_length[i] + len(entity_prompt)
@@ -288,9 +288,9 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         entity_prompt = []
 
         # add enity types to prompt
-        for entity_type in all_types:
+        for relation_type in all_types:
             entity_prompt.append(self.rel_token)
-            entity_prompt.append(entity_type)
+            entity_prompt.append(relation_type)
 
         entity_prompt.append(self.sep_token)
 
@@ -472,10 +472,10 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         return all_relations
 
 
-    def evaluate(self, test_data, flat_ner=False, threshold=0.5, batch_size=12, entity_types=None, top_k=1):
+    def evaluate(self, test_data, flat_ner=False, threshold=0.5, batch_size=12, relation_types=None, top_k=1):
         self.eval()
-        logger.info(f"Number of classes to evaluate with --> {len(entity_types)}")
-        data_loader = self.create_dataloader(test_data, batch_size=batch_size, entity_types=entity_types, shuffle=False)
+        logger.info(f"Number of classes to evaluate with --> {len(relation_types)}")
+        data_loader = self.create_dataloader(test_data, batch_size=batch_size, relation_types=relation_types, shuffle=False)
         device = next(self.parameters()).device
         all_preds = []
         all_trues = []

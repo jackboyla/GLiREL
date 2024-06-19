@@ -153,9 +153,9 @@ class InstructBase(nn.Module):
         }
         return out
 
-    def collate_fn(self, batch_list, entity_types=None, train_relation_types=None):
+    def collate_fn(self, batch_list, relation_types=None, train_relation_types=None):
         # batch_list: list of dict containing tokens, ner
-        if entity_types is None:
+        if relation_types is None:
             assert train_relation_types is not None, "`train_relation_types` must be provided for relation extraction data loader"
             negs = self.get_negatives_rel(train_relation_types, 100)
             class_to_ids = []
@@ -207,7 +207,7 @@ class InstructBase(nn.Module):
             ]
 
         else:
-            class_to_ids = {k: v for v, k in enumerate(entity_types, start=1)}
+            class_to_ids = {k: v for v, k in enumerate(relation_types, start=1)}
             id_to_classes = {k: v for v, k in class_to_ids.items()}
             batch = [
                 self.preprocess_spans(b["tokenized_text"], b["ner"], class_to_ids, b.get('relations')) for b in batch_list
@@ -257,8 +257,8 @@ class InstructBase(nn.Module):
         random.shuffle(train_relation_types)
         return train_relation_types[:sampled_neg]
 
-    def create_dataloader(self, data, entity_types=None, train_relation_types=None, **kwargs):
-        return DataLoader(data, collate_fn=lambda x: self.collate_fn(x, entity_types, train_relation_types), **kwargs)
+    def create_dataloader(self, data, relation_types=None, train_relation_types=None, **kwargs):
+        return DataLoader(data, collate_fn=lambda x: self.collate_fn(x, relation_types, train_relation_types), **kwargs)
 
     def set_sampling_params(self, max_types, shuffle_types, random_drop, max_neg_type_ratio, max_len, num_train_rel_types=None):
         """

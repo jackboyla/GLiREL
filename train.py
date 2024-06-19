@@ -336,7 +336,7 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
                         flat_ner=True, 
                         threshold=config.eval_threshold, 
                         batch_size=config.eval_batch_size,
-                        entity_types=eval_rel_types,
+                        relation_types=eval_rel_types,
                         top_k=top_k
                     )
 
@@ -353,7 +353,7 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
 
                     logger.info(f"Step={step}\n{results}")
                     
-                    
+
                     saved_models.append((current_path, macro_f1))
                     if len(saved_models) > max_saves:
                         saved_models.sort(key=lambda x: x[1], reverse=True)  # Sort models by macro F1 score
