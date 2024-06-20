@@ -40,15 +40,18 @@ python train.py --config configs/config_few_rel.yaml
 # If doing hyperparameter sweeping, define sweep config here
 
 sweep_configuration = {
-    "method": "random",
-    "metric": {"goal": "maximize", "name": "eval_f1"},
+    "method": "grid", # https://docs.wandb.ai/guides/sweeps/sweep-config-keys#method
+    "metric": {"goal": "maximize", "name": "eval_f1_micro"},
     "parameters": {
-        "num_train_rel_types": {"values": [15, 20, 25, 30, 35, 40]},
-        "num_unseen_rel_types": {"values": [15]},
-        "random_drop": {"values": [True, False]},
-        "lr_others": {"max": 1e-3, "min": 5e-5},
-        "dropout": {"max": 0.55, "min": 0.3},
-        "model_name": {"values": ["microsoft/deberta-v3-large", "microsoft/deberta-v3-small"]},
+        "scorer": {"values": ["dot", "dot_norm", "dot_thresh", "concat_proj"]},
+        "refine_prompt": {"values": [False, True]},
+        "refine_relaton": {"values": [False, True]},
+        # "num_train_rel_types": {"values": [15, 20, 25, 30, 35, 40]},
+        # "num_unseen_rel_types": {"values": [15]},
+        # "random_drop": {"values": [True, False]},
+        # "lr_others": {"max": 1e-3, "min": 5e-5},
+        # "dropout": {"max": 0.55, "min": 0.3},
+        # "model_name": {"values": ["microsoft/deberta-v3-large", "microsoft/deberta-v3-small"]},
     },
 }
 
@@ -344,12 +347,12 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
                         wandb.log(
                                 {
                                 "epoch": step // len(train_loader),
-                                "eval_micro_f1": micro_f1,
-                                "eval_macro_f1": macro_f1,
+                                "eval_f1_micro": micro_f1,
+                                "eval_f1_macro": macro_f1,
                             }
                         )
                     elif run is not None:
-                        run.log({"eval_f1_micro": micro_f1, "eval_macro_f1": macro_f1})
+                        run.log({"eval_f1_micro": micro_f1, "eval_f1_macro": macro_f1})
 
                     logger.info(f"Step={step}\n{results}")
                     
@@ -402,9 +405,10 @@ def main(args):
     if args.wandb_sweep:
         run = wandb.init()
         # overwrite config values with sweep values 
-        config.num_train_rel_types = wandb.config.num_train_rel_types
-        config.num_unseen_rel_types = wandb.config.num_unseen_rel_types
-        config.lr_others = wandb.config.lr_others
+        for attribute in config._get_args():
+            if attribute in wandb.config:
+                logger.info(f"Overwriting {attribute} with {wandb.config[attribute]}")
+                config.attribute = wandb.config[attribute]
 
 
     # Prep data
