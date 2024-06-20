@@ -51,14 +51,12 @@ def get_entity_pair_reps(entity_reps):
         # NOTE: OOM error can occur here -- if there's too many entities
         pair_reps = torch.cat([entity_reps_expanded, entity_reps_tiled], dim=3)  # [B, num_entities, num_entities, 2 * D]
 
-        # Now we have an upper triangular matrix where each [i, j] element is the pair combination
-        # of the i-th and j-th entities. We need to remove the diagonal and lower triangular parts.
-        # triu_mask = torch.triu(torch.ones(num_entities, num_entities), diagonal=1).bool()
-        # combined_pairs = pair_reps[:, triu_mask]
+        # Now we have an entity pair matrix where each [i, j] element is the pair combination
+        # of the i-th and j-th entities. We need to mask the diagonal (self-pairs).
 
         # Create a mask to exclude self-pairs
         indices = torch.arange(num_entities)
-        mask = indices.unsqueeze(0) != indices.unsqueeze(1)  # Create a mask to exclude self-pairs
+        mask = (indices.unsqueeze(0) != indices.unsqueeze(1))  # Create a mask to exclude self-pairs
         mask = mask.unsqueeze(0).expand(B, -1, -1)           # Expand mask for all batches
 
         combined_pairs = pair_reps[mask].view(B, -1, 2*D)    # Reshape to [B, num_valid_pairs, 2*D]
