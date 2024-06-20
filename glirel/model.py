@@ -86,11 +86,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
             )
 
         # scoring layer
-        if hasattr(config, "scorer"):
-            scoring_type = config.scorer
-        else:
-            scoring_type = "dot"
-        self.scorer = ScorerLayer(scoring_type, hidden_size=config.hidden_size, dropout=config.dropout)
+        self.scorer = ScorerLayer(config.scorer, hidden_size=config.hidden_size, dropout=config.dropout)
 
     def get_optimizer(self, lr_encoder, lr_others, freeze_token_rep=False):
         """
