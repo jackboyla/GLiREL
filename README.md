@@ -29,7 +29,7 @@ model = GLiREL.from_pretrained("jackboyla/glirel_base")
 nlp = spacy.load('en_core_web_sm')
 doc = nlp(text)
 
-text = "Jack Dorsey's father, Tim Dorsey, is a licensed pilot. Jack met his wife Sarah Paulson in New York in 2003. They have one son, Edward."
+text = 'Derren Nesbitt had a history of being cast in "Doctor Who", having played villainous warlord Tegana in the 1964 First Doctor serial "Marco Polo".'
 
 labels = ['country of origin', 'licensed to broadcast to', 'father', 'followed by', 'characters']
 
