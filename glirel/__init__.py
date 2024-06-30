@@ -1,4 +1,4 @@
-__version__ = "0.1.2.dev"
+__version__ = "0.1.3"
 
 from .model import GLiREL
 from typing import Optional, Union, List
