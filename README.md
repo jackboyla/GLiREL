@@ -195,8 +195,6 @@ JSONL file:
   ], 
   "tokenized_text": ["The", "Parliament", "of", "Victoria", "consists", "of", "the", "lower", "house", "Legislative", "Assembly", ",", "the", "upper", "house", "Legislative", "Council", "and", "the", "Queen", "of", "Australia", "."]
 }
-
-
 ```
 
 
