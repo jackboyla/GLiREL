@@ -24,12 +24,13 @@ Once you've downloaded the GLiREL library, you can import the `GLiREL` class. Yo
 from glirel import GLiREL
 import spacy
 
-model = GLiREL.from_pretrained("jackboyla/glirel_base")
+model = GLiREL.from_pretrained("jackboyla/glirel_beta")
 
 nlp = spacy.load('en_core_web_sm')
-doc = nlp(text)
 
 text = 'Derren Nesbitt had a history of being cast in "Doctor Who", having played villainous warlord Tegana in the 1964 First Doctor serial "Marco Polo".'
+doc = nlp(text)
+tokens = [token.text for token in doc]
 
 labels = ['country of origin', 'licensed to broadcast to', 'father', 'followed by', 'characters']
 
@@ -42,7 +43,7 @@ print('Number of relations:', len(relations))
 sorted_data_desc = sorted(relations, key=lambda x: x['score'], reverse=True)
 print("\nDescending Order by Score:")
 for item in sorted_data_desc:
-    print(f"{item['head_text']} --> {item['label']} --> {item['tail_text']} | socre: {item['score']}")
+    print(f"{item['head_text']} --> {item['label']} --> {item['tail_text']} | score: {item['score']}")
 ```
 
 ### Expected Output
