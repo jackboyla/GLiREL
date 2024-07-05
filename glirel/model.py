@@ -445,10 +445,9 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
         all_relations = []
 
-        rels = []
         for i, output in enumerate(outputs):
 
-            
+            rels = []
             for (head_pos, tail_pos), pred_label, score in output:
 
                 # +1 to indices to restore spaCy tokenization
