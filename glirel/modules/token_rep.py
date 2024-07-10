@@ -41,7 +41,7 @@ class TokenRepLayer(nn.Module):
         if hasattr(self, "projection"):
             token_embeddings = self.projection(token_embeddings)
 
-        B = len(lengths)
+        B = lengths.size(0)
         max_length = lengths.max()
         mask = (torch.arange(max_length).view(1, -1).repeat(B, 1) < lengths.cpu().unsqueeze(1)).to(
             token_embeddings.device).long()
