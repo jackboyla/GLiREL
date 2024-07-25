@@ -34,7 +34,7 @@ tokens = [token.text for token in doc]
 
 labels = ['country of origin', 'licensed to broadcast to', 'father', 'followed by', 'characters']
 
-ner = [[26, 27, 'Q2989881', 'Marco Polo'], [22, 23, 'Q2989412', 'First Doctor']]
+ner = [[26, 27, 'PERSON', 'Marco Polo'], [22, 23, 'Q2989412', 'First Doctor']] # 'type' is not used -- it can be any string!
 
 relations = model.predict_relations(tokens, labels, threshold=0.0, ner=ner, top_k=1)
 
@@ -174,7 +174,7 @@ JSONL file:
   ], 
   "relations": [
     {
-      "head": {"mention": "Binsey", "position": [7, 7], "type": "Q4914513"},
+      "head": {"mention": "Binsey", "position": [7, 7], "type": "LOC"}, # 'type' is not used -- it can be any string!
       "tail": {"mention": "River Thames", "position": [11, 12], "type": "Q19686"}, 
       "relation_text": "located in or next to body of water"
     }
