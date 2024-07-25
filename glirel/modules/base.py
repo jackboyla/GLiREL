@@ -179,7 +179,7 @@ class InstructBase(nn.Module):
                 # types = [NO_RELATION_STR] + types
 
                 if len(types) < self.base_config.num_train_rel_types:
-                    logger.warn(f"Relation types less than num_train_rel_types: {len(types)} < {self.base_config.num_train_rel_types}")
+                    logger.debug(f"Relation types less than num_train_rel_types: {len(types)} < {self.base_config.num_train_rel_types}")
 
 
                 # shuffle (every epoch)
