@@ -178,7 +178,7 @@ def dirty_split_data_by_relation_type(data, num_unseen_rel_types, max_test_size)
                 train_data.append(item)
 
         # if we have the right number of eval relations, break
-        if len(get_unique_relations(test_data)) == original_num_unseen_rel_types: 
+        if len(get_unique_relations(test_data)) == original_num_unseen_rel_types or len(test_data) >= max_test_size: 
             correct_num_unseen_relations_achieved = True
         else:
             # bump the number of unseen relations by 1 to cast a wider net
@@ -251,7 +251,7 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
         x = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in x.items()}
 
 
-        with torch.autocast(device_type=device, dtype=torch.float16, enabled=use_amp):
+        with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=use_amp):
             try:
                 loss = model(x)  # Forward pass
             except Exception as e:
