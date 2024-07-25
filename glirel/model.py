@@ -12,7 +12,7 @@ from glirel.modules.base import InstructBase, GLiRELModelOutput
 from glirel.modules.evaluator import greedy_search, RelEvaluator
 from glirel.modules.span_rep import SpanRepLayer
 from glirel.modules.rel_rep import RelRepLayer
-from glirel.modules.token_rep import TokenRepLayer
+from glirel.modules.token_rep import TokenRepLayer, Encoder
 from glirel.modules import loss_functions
 from glirel.modules.onnx import BaseORTModel, SpanORTModel
 from torch import nn
@@ -47,9 +47,10 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
         if self.onnx_model is None:
             # usually a pretrained bidirectional transformer, returns first subtoken representation
-            self.token_rep_layer = TokenRepLayer(model_name=config.model_name, fine_tune=config.fine_tune,
-                                                subtoken_pooling=config.subtoken_pooling, hidden_size=config.hidden_size,
-                                                add_tokens=[self.rel_token, self.sep_token])
+            # self.token_rep_layer = TokenRepLayer(model_name=config.model_name, fine_tune=config.fine_tune,
+            #                                     subtoken_pooling=config.subtoken_pooling, hidden_size=config.hidden_size,
+            #                                     add_tokens=[self.rel_token, self.sep_token])
+            self.token_rep_layer = Encoder(config, from_pretrained=True)
 
             # hierarchical representation of tokens (zaratiana et al, 2022)
             # https://arxiv.org/pdf/2203.14710.pdf
@@ -361,6 +362,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
                 tokens: list, 
                 ):
 
+
         if self.training:
             return self.compute_loss(seq_length, classes_to_id, tokens, span_idx, span_mask, rel_label)
         else:
@@ -402,6 +404,8 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         seq_length_p = seq_length + prompt_entity_length
 
         out = self.token_rep_layer(tokens_p, seq_length_p)
+        # print(f"out shape: {out['mask'].shape}")
+        # out = {"embeddings": torch.rand(1, 27, 768), "mask": torch.zeros(1, 27)}
 
         word_rep_w_prompt = out["embeddings"]
         mask_w_prompt = out["mask"]
@@ -460,12 +464,14 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
         assert isinstance(ner, list), "ner should be a list of list of spans like [[(1, 2, 'PER'), (3, 4, 'ORG'), ...], ]"
 
+        inputs = {"seq_length": x["seq_length"], "classes_to_id": x["classes_to_id"], "tokens": x["tokens"], "span_idx": x["span_idx"], "span_mask": x["span_mask"], "rel_label": x["rel_label"]}
         if self.onnx_model:
-            output: GLiRELModelOutput = self.onnx_model(**x)
+            output: GLiRELModelOutput = self.onnx_model(**inputs)
             local_scores = output.logits
         else:
             self.eval()
-            output: GLiRELModelOutput = self.compute_score_eval(**x, device=next(self.parameters()).device)
+            output: GLiRELModelOutput = self.compute_score_eval(
+                **inputs, device=next(self.parameters()).device)
             local_scores = output.logits
 
 
