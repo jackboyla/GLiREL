@@ -41,6 +41,7 @@ dependencies = [
     "flair",
     "seqeval",
     "tqdm",
+    "datasets",
 ]
 dynamic = ["version"]
 
