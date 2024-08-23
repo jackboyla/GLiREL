@@ -8,12 +8,13 @@ import torch
 import torch.nn.functional as F
 import yaml
 from glirel.modules.layers import LstmSeq2SeqEncoder, ScorerLayer, FilteringLayer, RefineLayer
-from glirel.modules.base import InstructBase
+from glirel.modules.base import InstructBase, GLiRELModelOutput
 from glirel.modules.evaluator import greedy_search, RelEvaluator
 from glirel.modules.span_rep import SpanRepLayer
 from glirel.modules.rel_rep import RelRepLayer
-from glirel.modules.token_rep import TokenRepLayer
+from glirel.modules.token_rep import TokenRepLayer, Encoder
 from glirel.modules import loss_functions
+from glirel.modules.onnx import BaseORTModel, SpanORTModel
 from torch import nn
 from torch.nn.utils.rnn import pad_sequence
 from huggingface_hub import PyTorchModelHubMixin, hf_hub_download
@@ -30,63 +31,117 @@ logging.basicConfig(level=logging.INFO,
 
 
 class GLiREL(InstructBase, PyTorchModelHubMixin):
-    def __init__(self, config):
+    def __init__(
+            self, 
+            config,
+            onnx_model: Optional[Union[BaseORTModel, SpanORTModel]] = None
+        ):
         super().__init__(config)
 
         self.config = config
+        self.onnx_model = onnx_model
 
         # [REL] token
         self.rel_token = "<<REL>>"
         self.sep_token = "<<SEP>>"
 
-        # usually a pretrained bidirectional transformer, returns first subtoken representation
-        self.token_rep_layer = TokenRepLayer(model_name=config.model_name, fine_tune=config.fine_tune,
-                                             subtoken_pooling=config.subtoken_pooling, hidden_size=config.hidden_size,
-                                             add_tokens=[self.rel_token, self.sep_token])
+        if self.onnx_model is None:
+            # usually a pretrained bidirectional transformer, returns first subtoken representation
+            # self.token_rep_layer = TokenRepLayer(model_name=config.model_name, fine_tune=config.fine_tune,
+            #                                     subtoken_pooling=config.subtoken_pooling, hidden_size=config.hidden_size,
+            #                                     add_tokens=[self.rel_token, self.sep_token])
+            self.token_rep_layer = Encoder(config, from_pretrained=True)
 
-        # hierarchical representation of tokens (zaratiana et al, 2022)
-        # https://arxiv.org/pdf/2203.14710.pdf
-        self.rnn = LstmSeq2SeqEncoder(
-            input_size=config.hidden_size,
-            hidden_size=config.hidden_size // 2,
-            num_layers=1,
-            bidirectional=True,
-        )
-
-
-        self.span_rep_layer = RelRepLayer(
-            rel_mode=config.span_mode,
-            hidden_size=config.hidden_size,
-            max_width=config.max_width,
-            dropout=config.dropout,
-        )
-
-        # prompt representation (FFN)
-        self.prompt_rep_layer = nn.Sequential(
-            nn.Linear(config.hidden_size, config.hidden_size * 4),
-            nn.Dropout(config.dropout),
-            nn.ReLU(),
-            nn.Linear(config.hidden_size * 4, config.hidden_size)
-        )
-
-        # refine relation representation
-        if hasattr(config, "refine_relation") and config.refine_relation:
-            self.refine_relation = RefineLayer(
-                config.hidden_size, config.hidden_size // 64, num_layers=1, ffn_mul=config.ffn_mul,
-                dropout=config.dropout,
-                read_only=True
+            # hierarchical representation of tokens (zaratiana et al, 2022)
+            # https://arxiv.org/pdf/2203.14710.pdf
+            self.rnn = LstmSeq2SeqEncoder(
+                input_size=config.hidden_size,
+                hidden_size=config.hidden_size // 2,
+                num_layers=1,
+                bidirectional=True,
             )
 
-        # refine prompt representation
-        if hasattr(config, "refine_prompt") and config.refine_prompt:
-            self.refine_prompt = RefineLayer(
-                config.hidden_size, config.hidden_size // 64, num_layers=2, ffn_mul=config.ffn_mul,
+
+            self.span_rep_layer = RelRepLayer(
+                rel_mode=config.span_mode,
+                hidden_size=config.hidden_size,
+                max_width=config.max_width,
                 dropout=config.dropout,
-                read_only=True
             )
 
-        # scoring layer
-        self.scorer = ScorerLayer(config.scorer, hidden_size=config.hidden_size, dropout=config.dropout)
+            # prompt representation (FFN)
+            self.prompt_rep_layer = nn.Sequential(
+                nn.Linear(config.hidden_size, config.hidden_size * 4),
+                nn.Dropout(config.dropout),
+                nn.ReLU(),
+                nn.Linear(config.hidden_size * 4, config.hidden_size)
+            )
+
+            # refine relation representation
+            if hasattr(config, "refine_relation") and config.refine_relation:
+                self.refine_relation = RefineLayer(
+                    config.hidden_size, config.hidden_size // 64, num_layers=1, ffn_mul=config.ffn_mul,
+                    dropout=config.dropout,
+                    read_only=True
+                )
+
+            # refine prompt representation
+            if hasattr(config, "refine_prompt") and config.refine_prompt:
+                self.refine_prompt = RefineLayer(
+                    config.hidden_size, config.hidden_size // 64, num_layers=2, ffn_mul=config.ffn_mul,
+                    dropout=config.dropout,
+                    read_only=True
+                )
+
+            # scoring layer
+            self.scorer = ScorerLayer(config.scorer, hidden_size=config.hidden_size, dropout=config.dropout)
+
+
+    def prepare_model_inputs(self, texts, labels, ner):
+        """
+        Prepare inputs for the model.
+
+        Args:
+            texts (str): The input text or texts to process.
+            labels (str): The corresponding labels for the input texts.
+        """
+
+        raw_batch = {"texts": texts, "labels": labels, "ner": ner}    
+
+        all_tokens = []
+        all_start_token_idx_to_text_idx = []
+        all_end_token_idx_to_text_idx = []
+
+        for text in texts:
+            tokens = []
+            start_token_idx_to_text_idx = []
+            end_token_idx_to_text_idx = []
+            if type(text) is str:
+                for match in re.finditer(r'\w+(?:[-_]\w+)*|\S', text):
+                    tokens.append(match.group())
+                    start_token_idx_to_text_idx.append(match.start())
+                    end_token_idx_to_text_idx.append(match.end())
+            else:
+                tokens = text  # already tokenized
+            all_tokens.append(tokens)
+            all_start_token_idx_to_text_idx.append(start_token_idx_to_text_idx)
+            all_end_token_idx_to_text_idx.append(end_token_idx_to_text_idx)
+
+        input_x = [{"tokenized_text": tk, "ner": None} for tk in all_tokens]
+        if ner is not None:
+            for i, x in enumerate(input_x):
+                x['ner'] = ner[i]
+
+        x = self.collate_fn(input_x, labels)
+        
+        if self.onnx_model is None:
+            device = next(self.parameters()).device
+            for key in x:
+                if x[key] is not None and isinstance(x[key], torch.Tensor):
+                    x[key] = x[key].to(device)
+
+        return x, raw_batch
+
 
     def get_optimizer(self, lr_encoder, lr_others, freeze_token_rep=False):
         """
@@ -116,18 +171,25 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
         return optimizer
 
-    def compute_score_train(self, x):
+    def compute_score_train(self, 
+                seq_length: torch.Tensor, 
+                classes_to_id: list, 
+                tokens: list, 
+                span_idx: torch.Tensor, 
+                span_mask: torch.Tensor,
+                rel_label: torch.Tensor,
+                ):
 
-        span_idx = x['span_idx'] * x['span_mask'].unsqueeze(-1)  # ([B, num_possible_spans, 2])  *  ([B, num_possible_spans, 1])
+        span_idx = span_idx * span_mask.unsqueeze(-1)  # ([B, num_possible_spans, 2])  *  ([B, num_possible_spans, 1])
 
-        new_length = x['seq_length'].clone()
+        new_length = seq_length.clone()
         new_tokens = []
         all_len_prompt = []
         num_classes_all = []
 
         # add prompt to the tokens
-        for i in range(len(x['tokens'])):
-            all_types_i = list(x['classes_to_id'][i].keys())
+        for i in range(len(tokens)):
+            all_types_i = list(classes_to_id[i].keys())
             # multiple entity types in all_types. Prompt is appended at the start of tokens
             entity_prompt = []
             num_classes_all.append(len(all_types_i))
@@ -141,7 +203,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
             # [REL] relation_type [REL] relation_type ... [REL] relation_type [SEP]
 
             # add prompt to the tokens
-            tokens_p = entity_prompt + x['tokens'][i]
+            tokens_p = entity_prompt + tokens[i]
 
             # input format:
             # [REL] relation_type_1 [REL] relation_type_2 ... [REL] relation_type_m [SEP] token_1 token_2 ... token_n
@@ -156,9 +218,9 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         # create a mask using num_classes_all (False, if it exceeds the number of classes, True otherwise)
         max_num_classes = max(num_classes_all)
         rel_type_mask = torch.arange(max_num_classes).unsqueeze(0).expand(len(num_classes_all), -1).to(
-            x['span_mask'].device)
+            span_mask.device)
         rel_type_mask = rel_type_mask < torch.tensor(num_classes_all).unsqueeze(-1).to(
-            x['span_mask'].device)  # [batch_size, max_num_classes]
+            span_mask.device)  # [batch_size, max_num_classes]
 
         # compute all token representations
         bert_output = self.token_rep_layer(new_tokens, new_length)
@@ -169,12 +231,12 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         word_rep = []      # word representation (after [SEP])
         mask = []          # mask (after [SEP])
         rel_type_rep = []  # entity type representation (before [SEP])
-        for i in range(len(x['tokens'])):
+        for i in range(len(tokens)):
             prompt_entity_length = all_len_prompt[i]  # length of prompt for this example
             # get word representation (after [SEP])
-            word_rep.append(word_rep_w_prompt[i, prompt_entity_length:prompt_entity_length + x['seq_length'][i]])
+            word_rep.append(word_rep_w_prompt[i, prompt_entity_length:prompt_entity_length + seq_length[i]])
             # get mask (after [SEP])
-            mask.append(mask_w_prompt[i, prompt_entity_length:prompt_entity_length + x['seq_length'][i]])
+            mask.append(mask_w_prompt[i, prompt_entity_length:prompt_entity_length + seq_length[i]])
 
             # get entity type representation (before [SEP])
             relation_rep = word_rep_w_prompt[i, :prompt_entity_length - 1]  # remove [SEP]
@@ -196,7 +258,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
 
         # refine relation representation ##############################################
-        relation_classes = x['rel_label']  # [B, num_entity_pairs]
+        relation_classes = rel_label  # [B, num_entity_pairs]
         rel_rep_mask = relation_classes > 0 # -1
         ################################################################################
 
@@ -219,16 +281,29 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
         return scores, num_classes, rel_type_mask   # ([B, num_pairs, num_classes]), num_classes, ([B, num_classes])
 
-    def forward(self, x):
+
+    def compute_loss(self,
+                seq_length: torch.Tensor, 
+                classes_to_id: list, 
+                tokens: list, 
+                span_idx: torch.Tensor, 
+                span_mask: torch.Tensor,
+                rel_label: torch.Tensor,
+                ):
+                     
         # compute span representation
-        scores, num_classes, rel_type_mask = self.compute_score_train(x)
-        batch_size = scores.shape[0]
+        scores, num_classes, rel_type_mask = self.compute_score_train(
+            seq_length, classes_to_id, 
+            tokens, span_idx, 
+            span_mask,
+            rel_label)
+        batch_size = scores.size(0)
 
 
         # loss for filtering classifier
         logits_label = scores.view(-1, num_classes)
 
-        labels = x['rel_label'].view(-1)     # [B * num_entity_pairs]
+        labels = rel_label.view(-1)     # [B * num_entity_pairs]
 
         mask_label = labels != -1
         labels.masked_fill_(~mask_label, 0)  # Set the labels of padding tokens to 0
@@ -270,16 +345,48 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         all_losses = all_losses * mask_label.float() * weight_c
         loss = all_losses.sum()
 
-        return loss
+        return GLiRELModelOutput(
+            loss=loss,
+            logits=scores,
+            rel_type_mask=rel_type_mask,
+            labels=labels,
+        )
 
 
-    def compute_score_eval(self, x, device):
+    def forward(self, 
+                seq_length: torch.Tensor, 
+                span_mask: torch.Tensor,
+                span_idx: torch.Tensor, 
+                rel_label: torch.Tensor,
+                classes_to_id: list, 
+                tokens: list, 
+                ):
+
+
+        if self.training:
+            return self.compute_loss(seq_length, classes_to_id, tokens, span_idx, span_mask, rel_label)
+        else:
+            return self.compute_score_eval(
+                seq_length, classes_to_id, tokens, span_idx, span_mask, rel_label,
+                device=next(self.parameters()).device
+            )
+
+
+    def compute_score_eval(self,
+                seq_length: torch.Tensor, 
+                classes_to_id: list, 
+                tokens: list, 
+                span_idx: torch.Tensor, 
+                span_mask: torch.Tensor,
+                rel_label: torch.Tensor,
+                device,
+                ):
         # check if classes_to_id is dict
-        assert isinstance(x['classes_to_id'], dict), "classes_to_id must be a dict"
+        assert isinstance(classes_to_id, dict), "classes_to_id must be a dict"
 
-        span_idx = (x['span_idx'] * x['span_mask'].unsqueeze(-1)).to(device)
+        span_idx = (span_idx * span_mask.unsqueeze(-1)).to(device)
 
-        all_types = list(x['classes_to_id'].keys())
+        all_types = list(classes_to_id.keys())
         # multiple entity types in all_types. Prompt is appended at the start of tokens
         entity_prompt = []
 
@@ -293,10 +400,12 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         prompt_entity_length = len(entity_prompt)
 
         # add prompt
-        tokens_p = [entity_prompt + tokens for tokens in x['tokens']]
-        seq_length_p = x['seq_length'] + prompt_entity_length
+        tokens_p = [entity_prompt + tokens for tokens in tokens]
+        seq_length_p = seq_length + prompt_entity_length
 
         out = self.token_rep_layer(tokens_p, seq_length_p)
+        # print(f"out shape: {out['mask'].shape}")
+        # out = {"embeddings": torch.rand(1, 27, 768), "mask": torch.zeros(1, 27)}
 
         word_rep_w_prompt = out["embeddings"]
         mask_w_prompt = out["mask"]
@@ -311,7 +420,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         rel_type_rep = rel_type_rep[:, 0::2, :]
 
         rel_type_rep = self.prompt_rep_layer(rel_type_rep)  # (batch_size, len_types, hidden_size)
-        batch_size, num_classes = rel_type_rep.shape[0], rel_type_rep.shape[1]
+        batch_size, num_classes = rel_type_rep.size(0), rel_type_rep.size(1)
         # make rel_type_mask all ones of shape (B, num_classes)
         rel_type_mask = torch.ones(batch_size, num_classes).to(device)
 
@@ -319,39 +428,52 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         rel_rep = self.span_rep_layer(word_rep, span_idx)
 
 
-        # refine relation representation ##############################################
-        relation_classes = x['rel_label']  # [B, num_entity_pairs]
-        rel_rep_mask = relation_classes > -1
-        ################################################################################
+        # # refine relation representation ##############################################
+        # relation_classes = rel_label # [B, num_entity_pairs]
+        # rel_rep_mask = relation_classes # > -1
+        # # rel_rep_mask = torch.where(relation_classes > -1, torch.tensor(1.0, device=device), torch.tensor(0.0, device=device))
 
-        if hasattr(self, "refine_relation"):
-            # refine relation representation
-            rel_rep = self.refine_relation(
-                rel_rep, word_rep, rel_rep_mask, mask
-            )
+        # ################################################################################
 
-        if hasattr(self, "refine_prompt"):
-            # refine relation representation with relation type representation ############
-            rel_type_rep = self.refine_prompt(
-                rel_type_rep, rel_rep, rel_type_mask, rel_rep_mask
-            )
-        ################################################################################
+        # if hasattr(self, "refine_relation"):
+        #     # refine relation representation
+        #     rel_rep = self.refine_relation(
+        #         rel_rep, word_rep, rel_rep_mask, mask
+        #     )
+
+        # if hasattr(self, "refine_prompt"):
+        #     # refine relation representation with relation type representation ############
+        #     rel_type_rep = self.refine_prompt(
+        #         rel_type_rep, rel_rep, rel_type_mask, rel_rep_mask
+        #     )
+        # ################################################################################
 
 
         # scores
         local_scores = self.scorer(rel_rep, rel_type_rep) # ([B, num_pairs, num_classes])
         
 
-        return local_scores
+        return GLiRELModelOutput(
+            logits=local_scores,
+            # rel_type_mask=rel_type_mask,
+        )
 
 
     @torch.no_grad()
-    def predict(self, x, flat_ner=False, threshold=0.5, ner=None):
-        self.eval()
-        local_scores = self.compute_score_eval(x, device=next(self.parameters()).device)
-
+    def predict(self, x, threshold=0.5, ner=None):
 
         assert isinstance(ner, list), "ner should be a list of list of spans like [[(1, 2, 'PER'), (3, 4, 'ORG'), ...], ]"
+
+        inputs = {"seq_length": x["seq_length"], "classes_to_id": x["classes_to_id"], "tokens": x["tokens"], "span_idx": x["span_idx"], "span_mask": x["span_mask"], "rel_label": x["rel_label"]}
+        if self.onnx_model:
+            output: GLiRELModelOutput = self.onnx_model(**inputs)
+            local_scores = output.logits
+        else:
+            self.eval()
+            output: GLiRELModelOutput = self.compute_score_eval(
+                **inputs, device=next(self.parameters()).device)
+            local_scores = output.logits
+
 
         rels = []
         for i, _ in enumerate(x["tokens"]):
@@ -380,10 +502,10 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
             rels.append(rels_i)
         return rels
 
-    def predict_relations(self, text, labels, flat_ner=True, threshold=0.5, ner=None, top_k=-1):
-        return self.batch_predict_relations([text], labels, flat_ner=flat_ner, threshold=threshold, ner=[ner], top_k=top_k)[0]
+    def predict_relations(self, text, labels, threshold=0.5, ner=None, top_k=-1):
+        return self.batch_predict_relations([text], labels, threshold=threshold, ner=[ner], top_k=top_k)[0]
 
-    def batch_predict_relations(self, texts, labels, flat_ner=True, threshold=0.5, ner=None, top_k=-1):
+    def batch_predict_relations(self, texts, labels, threshold=0.5, ner=None, top_k=-1):
         """
         Predict relations for a batch of texts.
         texts:  List of texts | List[str]
@@ -391,33 +513,9 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         ...
         """
 
-        all_tokens = []
-        all_start_token_idx_to_text_idx = []
-        all_end_token_idx_to_text_idx = []
-
-        for text in texts:
-            tokens = []
-            start_token_idx_to_text_idx = []
-            end_token_idx_to_text_idx = []
-            if type(text) is str:
-                for match in re.finditer(r'\w+(?:[-_]\w+)*|\S', text):
-                    tokens.append(match.group())
-                    start_token_idx_to_text_idx.append(match.start())
-                    end_token_idx_to_text_idx.append(match.end())
-            else:
-                tokens = text  # already tokenized
-            all_tokens.append(tokens)
-            all_start_token_idx_to_text_idx.append(start_token_idx_to_text_idx)
-            all_end_token_idx_to_text_idx.append(end_token_idx_to_text_idx)
-
-        input_x = [{"tokenized_text": tk, "ner": None} for tk in all_tokens]
-        if ner is not None:
-            for i, x in enumerate(input_x):
-                x['ner'] = ner[i]
-
-        x = self.collate_fn(input_x, labels)
+        x, raw_batch = self.prepare_model_inputs(texts, labels=labels, ner=ner)
         
-        outputs = self.predict(x, flat_ner=flat_ner, threshold=threshold, ner=ner)
+        outputs = self.predict(x, threshold=threshold, ner=ner)
 
         # retrieve top_k predictions (if top_k > -1)
         if top_k > 0:
@@ -467,7 +565,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         return all_relations
 
 
-    def evaluate(self, test_data, flat_ner=False, threshold=0.5, batch_size=12, relation_types=None, top_k=1):
+    def evaluate(self, test_data, threshold=0.5, batch_size=12, relation_types=None, top_k=1):
         self.eval()
         logger.info(f"Number of classes to evaluate with --> {len(relation_types)}")
         data_loader = self.create_dataloader(test_data, batch_size=batch_size, relation_types=relation_types, shuffle=False)
@@ -486,7 +584,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
             ner = x['entities']
 
 
-            batch_predictions = self.predict(x, flat_ner, threshold, ner)
+            batch_predictions = self.predict(x, threshold, ner)
 
             # TODO: test throroughly
             all_trues.extend(x["relations"])
@@ -542,9 +640,10 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         token: Union[str, bool, None],
         map_location: str = "cpu",
         strict: bool = False,
+        load_onnx_model: bool = False,
+        onnx_model_file: Optional[str] = None,
         **model_kwargs,
     ):
-
         # Use "pytorch_model.bin" and "glirel_config.json"
         model_file = Path(model_id) / "pytorch_model.bin"
         if not model_file.exists():
@@ -573,10 +672,29 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
                 local_files_only=local_files_only,
             )
         config = load_config_as_namespace(config_file)
-        model = cls(config)
-        state_dict = torch.load(model_file, map_location=torch.device(map_location))
-        model.load_state_dict(state_dict, strict=strict, assign=True)
-        model.to(map_location)
+
+
+        if not load_onnx_model:
+            model = cls(config)
+            state_dict = torch.load(model_file, map_location=torch.device(map_location))
+            model.load_state_dict(state_dict, strict=strict, assign=True)
+            model.to(map_location)
+        else:
+            # ONNX
+            import onnxruntime as ort
+
+            model_file = Path(model_id) / onnx_model_file
+            if not os.path.exists(model_file):
+                raise FileNotFoundError(f"The ONNX model can't be loaded from {model_file}.")
+            session_options = ort.SessionOptions()
+            session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            ort_session = ort.InferenceSession(model_file, session_options)
+
+            model = SpanORTModel(ort_session)
+
+            model = cls(config, onnx_model=model)
+
+
         return model
 
     def save_pretrained(

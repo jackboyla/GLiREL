@@ -1,16 +1,25 @@
 from collections import defaultdict
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
+from dataclasses import dataclass
 
 import torch
 from torch import nn
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
+from transformers.utils import ModelOutput
 import random
 import os
 import logging
 
 
 logger = logging.getLogger(__name__)
+
+@dataclass
+class GLiRELModelOutput(ModelOutput):
+    loss: Optional[torch.FloatTensor] = None
+    logits: Optional[torch.FloatTensor] = None
+    rel_type_mask: Optional[torch.LongTensor] = None
+    labels: Optional[torch.LongTensor] = None
 
 
 def generate_entity_pairs_indices(span_idx):
@@ -190,7 +199,7 @@ class InstructBase(nn.Module):
                     num_rels = random.randint(1, len(types))
                     types = types[ :num_rels]
 
-                types = types[ : 35] # self.base_config.num_train_rel_types
+                types = types[ : self.base_config.num_train_rel_types]
 
 
                 # supervised training

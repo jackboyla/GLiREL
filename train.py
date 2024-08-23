@@ -9,6 +9,7 @@ from transformers import get_cosine_schedule_with_warmup, get_cosine_with_hard_r
 from glirel import GLiREL
 from glirel.modules.run_evaluation import sample_train_data
 from glirel.model import load_config_as_namespace
+from glirel.modules.base import GLiRELModelOutput
 from datetime import datetime
 import json
 import logging
@@ -253,7 +254,8 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
 
         with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=use_amp):
             try:
-                loss = model(x)  # Forward pass
+                output: GLiRELModelOutput = model(x)  # Forward pass
+                loss = output.loss
             except Exception as e:
                 logger.error(f"Error in step {step}: {e}")
                 logger.error(f"Num tokens: {[len(x['tokens'][i]) for i in range(len(x['tokens']))]}")
