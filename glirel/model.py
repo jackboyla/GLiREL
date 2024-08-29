@@ -85,6 +85,11 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
                 read_only=True
             )
 
+
+        # coreference resolution
+        self.coref_classifier = nn.Linear(config.hidden_size, 1)  # Simple linear layer for binary classification
+
+
         # scoring layer
         self.scorer = ScorerLayer(config.scorer, hidden_size=config.hidden_size, dropout=config.dropout)
 
@@ -214,10 +219,25 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         ################################################################################
 
 
+        # Coreference Resolution ##############################
+
+        # Binary classifier to decide if two spans are coreferent or not
+        coref_scores = self.coref_classifier(rel_rep)  # (B, num_pairs, 1)
+        ###############################################################
+        
+
         # similarity score
         scores = self.scorer(rel_rep, rel_type_rep) # ([B, num_pairs, num_classes])
 
-        return scores, num_classes, rel_type_mask   # ([B, num_pairs, num_classes]), num_classes, ([B, num_classes])
+        return scores, num_classes, rel_type_mask, coref_scores  # ([B, num_pairs, num_classes]), num_classes, ([B, num_classes]), ([B, num_pairs, 1])
+
+
+    def compute_coref_loss(self, coref_scores, coref_ground_truth):
+
+        coref_loss = F.binary_cross_entropy_with_logits(coref_scores, coref_ground_truth)
+
+        return coref_loss
+
 
     def forward(self, x):
         # compute span representation
@@ -258,7 +278,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         else:
             raise ValueError(f"Invalid loss function: {self.config.loss_func}")
         
-            
+        # Mask and weight relation classification loss
         # mask loss using rel_type_mask (B, C)
         masked_loss = all_losses.view(batch_size, -1, num_classes) * rel_type_mask.unsqueeze(1)   #  ([B, L*K, num_classes])  *  ([B, 1, num_classes])
         all_losses = masked_loss.view(-1, num_classes)
@@ -268,7 +288,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         weight_c = labels_one_hot + 1
         # apply mask
         all_losses = all_losses * mask_label.float() * weight_c
-        loss = all_losses.sum()
+        rel_loss = all_losses.sum()
 
         return loss
 
@@ -338,12 +358,18 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         ################################################################################
 
 
-        # scores
+        # relation class scores
         local_scores = self.scorer(rel_rep, rel_type_rep) # ([B, num_pairs, num_classes])
         
 
         return local_scores
 
+
+def aggregate_relations_using_coreference(relations):
+    """
+    
+    """
+    ...
 
     @torch.no_grad()
     def predict(self, x, flat_ner=False, threshold=0.5, ner=None):

@@ -94,12 +94,11 @@ class InstructBase(nn.Module):
         spans_idx = []
 
 
-        # TODO: test this!!
         for ner_span in ner:
             start, end = ner_span[0], ner_span[1]
             spans_idx.append((start, end))
 
-        MAX_SPANS = 35     # max number of span pairs -- can be increased with more VRAM
+        MAX_SPANS = 35     # NOTE: max number of span pairs -- can be increased with more VRAM
         if len(spans_idx) > MAX_SPANS:
             logger.warn(f"Truncating relations and ner spans because there are too many ({len(spans_idx)} > {MAX_SPANS})")
             spans_idx = spans_idx[: MAX_SPANS]
