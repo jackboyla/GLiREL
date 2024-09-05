@@ -87,7 +87,13 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
 
         # coreference resolution
-        self.coref_classifier = nn.Linear(config.hidden_size, 1)  # Simple linear layer for binary classification
+        if getattr(config, "coref_classifier", False):
+            self.coref_classifier = nn.Sequential(
+                nn.Linear(config.hidden_size, config.hidden_size),
+                nn.Dropout(config.dropout),
+                nn.ReLU(),
+                nn.Linear(config.hidden_size, 1)
+            )
 
 
         # scoring layer
@@ -218,16 +224,17 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
             )
         ################################################################################
 
+        # similarity score
+        scores = self.scorer(rel_rep, rel_type_rep) # ([B, num_pairs, num_classes])
+
 
         # Coreference Resolution ##############################
 
         # Binary classifier to decide if two spans are coreferent or not
-        coref_scores = self.coref_classifier(rel_rep)  # (B, num_pairs, 1)
+        if hasattr(self, "coref_classifier"):
+            coref_scores = self.coref_classifier(rel_rep)  # (B, num_pairs, 1)
         ###############################################################
         
-
-        # similarity score
-        scores = self.scorer(rel_rep, rel_type_rep) # ([B, num_pairs, num_classes])
 
         return scores, num_classes, rel_type_mask, coref_scores  # ([B, num_pairs, num_classes]), num_classes, ([B, num_classes]), ([B, num_pairs, 1])
 
@@ -238,26 +245,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
         return coref_loss
 
-
-    def forward(self, x):
-        # compute span representation
-        scores, num_classes, rel_type_mask = self.compute_score_train(x)
-        batch_size = scores.shape[0]
-
-
-        # loss for filtering classifier
-        logits_label = scores.view(-1, num_classes)
-
-        labels = x['rel_label'].view(-1)     # [B * num_entity_pairs]
-
-        mask_label = labels != -1
-        labels.masked_fill_(~mask_label, 0)  # Set the labels of padding tokens to 0
-
-        # one-hot encoding
-        labels_one_hot = torch.zeros(labels.size(0), num_classes + 1, dtype=torch.float32).to(scores.device) # ([batch_size * num_spans, num_classes + 1])
-        labels_one_hot.scatter_(1, labels.unsqueeze(1), 1)  # Set the corresponding index to 1
-        labels_one_hot = labels_one_hot[:, 1:]              # Remove the first column
-        # Shape of labels_one_hot: (batch_size * num_spans, num_classes)
+    def compute_relation_loss(self, logits_label, labels_one_hot):
 
         if self.config.loss_func == "binary_cross_entropy_loss":
             # compute loss (without reduction)
@@ -278,19 +266,61 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         else:
             raise ValueError(f"Invalid loss function: {self.config.loss_func}")
         
+        return all_losses
+
+
+    def forward(self, x):
+        # compute span representation
+        scores, num_classes, rel_type_mask, coref_scores = self.compute_score_train(x)
+        batch_size = scores.size(0)
+
+
+        # loss for filtering classifier
+        logits_label = scores.view(-1, num_classes)
+
+        labels = x['rel_label'].view(-1)     # [B * num_entity_pairs]
+
+        # mask for coreference and relation labels
+        coref_mask = (labels == -2)                 # Assuming -2 indicates coreference labels
+        rel_mask = (labels != -2) & (labels != -1)  # Exclude coreference and padding labels
+
+        # separate labels for relation classification
+        rel_labels = labels.masked_fill(~rel_mask, 0)  # Set non-relation labels to 0
+
+        # one-hot encoding
+        labels_one_hot = torch.zeros(labels.size(0), num_classes + 1, dtype=torch.float32).to(scores.device) # ([batch_size * num_spans, num_classes + 1])
+        labels_one_hot.scatter_(1, rel_labels.unsqueeze(1), 1) # Set the corresponding index to 1
+        labels_one_hot = labels_one_hot[:, 1:]                 # Remove the first column
+        # Shape of labels_one_hot: (batch_size * num_spans, num_classes)
+
+        all_losses = self.compute_relation_loss(logits_label, labels_one_hot)
+        
         # Mask and weight relation classification loss
         # mask loss using rel_type_mask (B, C)
         masked_loss = all_losses.view(batch_size, -1, num_classes) * rel_type_mask.unsqueeze(1)   #  ([B, L*K, num_classes])  *  ([B, 1, num_classes])
         all_losses = masked_loss.view(-1, num_classes)
         # expand mask_label to all_losses
-        mask_label = mask_label.unsqueeze(-1).expand_as(all_losses)
+        rel_mask = rel_mask.unsqueeze(-1).expand_as(all_losses)
         # put lower loss for in label_one_hot (2 for positive, 1 for negative)
         weight_c = labels_one_hot + 1
         # apply mask
-        all_losses = all_losses * mask_label.float() * weight_c
+        all_losses = all_losses * rel_mask.float() * weight_c
         rel_loss = all_losses.sum()
+        total_loss = rel_loss
 
-        return loss
+        if hasattr(self, "coref_classifier"):
+            if coref_mask.sum() == 0:
+                logger.info("Coreference mask is empty, skipping coreference loss calculation")
+            else:
+                # compute coreference loss (masked for coreference labels only)
+                coref_scores = coref_scores.view(-1)                                # Flatten coref_scores to match label shape (B * num_pairs * 1)
+                coref_ground_truth = labels.masked_fill(~coref_mask, 0).float()     # Mask out non-coref labels
+
+                coref_loss = self.compute_coref_loss(coref_scores[coref_mask], coref_ground_truth[coref_mask])
+                coref_loss = self.config.coref_loss_weight * coref_loss
+                total_loss += coref_loss
+
+        return total_loss
 
 
     def compute_score_eval(self, x, device):
