@@ -70,10 +70,6 @@ class InstructBase(nn.Module):
             if (head_idx, tail_idx) in rel_label_dict:
                 label = rel_label_dict[(head_idx, tail_idx)]
                 rel_labels.append(label)
-            elif (tail_idx, head_idx) in rel_label_dict:
-                # assign the same label as the reverse relation (if it exists)
-                label = rel_label_dict[(head_idx, tail_idx)]
-                rel_labels.append(label)
             else:
                 rel_labels.append(0)
 
@@ -153,6 +149,15 @@ class InstructBase(nn.Module):
         return out
 
     def collate_fn(self, batch_list, relation_types=None, train_relation_types=None):
+
+        def _substitute_coref_label(class_to_ids):
+            _COREFERENCE_LABEL = "SELF"  # NOTE: this label is given a special index to denote coreference (i.e -2)
+            for key in class_to_ids.keys():
+                if key.lower() == _COREFERENCE_LABEL.lower():
+                    class_to_ids[key] = -2
+
+            return class_to_ids
+
         # batch_list: list of dict containing tokens, ner
         if relation_types is None:
             assert train_relation_types is not None, "`train_relation_types` must be provided for relation extraction data loader"
@@ -197,6 +202,7 @@ class InstructBase(nn.Module):
                     types = sorted(b["label"])
 
                 class_to_id = {k: v for v, k in enumerate(types, start=1)}
+                class_to_id = _substitute_coref_label(class_to_id)  # NOTE: change COREFERENCE LABEL TO -2
                 id_to_class = {k: v for v, k in class_to_id.items()}
                 class_to_ids.append(class_to_id)
                 id_to_classes.append(id_to_class)
@@ -207,6 +213,7 @@ class InstructBase(nn.Module):
 
         else:
             class_to_ids = {k: v for v, k in enumerate(relation_types, start=1)}
+            class_to_ids = _substitute_coref_label(class_to_id)  # NOTE: change COREFERENCE LABEL TO -2
             id_to_classes = {k: v for v, k in class_to_ids.items()}
             batch = [
                 self.preprocess_spans(b["tokenized_text"], b["ner"], class_to_ids, b.get('relations')) for b in batch_list
