@@ -38,31 +38,42 @@ class SpanMarkerV1(nn.Module):
     
 
 def get_entity_pair_reps(entity_reps):
-        B, num_entities, D = entity_reps.shape
-
-        # Create a tensor [B, num_entities, num_entities, D] by repeating entity_reps for pairing
-        # Expanding entity_reps to pair each with every other
-        entity_reps_expanded = entity_reps.unsqueeze(2).expand(-1, -1, num_entities, -1)
-        entity_reps_tiled = entity_reps.unsqueeze(1).expand(-1, num_entities, -1, -1)
-
+    """
+    Generates entity pair representations, constrained by the token distance between entities.
+    
+    Args:
+        entity_reps: Tensor of shape [B, num_entities, D], representing the entity representations.
+        span_idx: Tensor of shape [B, num_entities, 2], representing the start and end indices of each entity.
+        max_distance: Integer, the maximum allowed token distance between entity pairs.
         
-        # Concatenate the representations of all possible pairs
-        # The shape becomes [B, num_entities, num_entities, 2D]
-        # NOTE: OOM error can occur here -- if there's too many entities
-        pair_reps = torch.cat([entity_reps_expanded, entity_reps_tiled], dim=3)  # [B, num_entities, num_entities, 2 * D]
+    Returns:
+        combined_pairs: Tensor of shape [B, num_valid_pairs, 2 * D], representing the valid entity pair representations.
+    """
+    B, num_entities, D = entity_reps.shape
 
-        # Now we have an entity pair matrix where each [i, j] element is the pair combination
-        # of the i-th and j-th entities. We need to mask the diagonal (self-pairs).
+    # Create a tensor [B, num_entities, num_entities, D] by repeating entity_reps for pairing
+    # Expanding entity_reps to pair each with every other
+    entity_reps_expanded = entity_reps.unsqueeze(2).expand(-1, -1, num_entities, -1)
+    entity_reps_tiled = entity_reps.unsqueeze(1).expand(-1, num_entities, -1, -1)
 
-        # Create a mask to exclude self-pairs
-        indices = torch.arange(num_entities)
-        mask = (indices.unsqueeze(0) != indices.unsqueeze(1))  # Create a mask to exclude self-pairs
-        mask = mask.unsqueeze(0).expand(B, -1, -1)           # Expand mask for all batches
+    
+    # Concatenate the representations of all possible pairs
+    # The shape becomes [B, num_entities, num_entities, 2D]
+    # NOTE: OOM error can occur here -- if there's too many entities
+    pair_reps = torch.cat([entity_reps_expanded, entity_reps_tiled], dim=3)  # [B, num_entities, num_entities, 2 * D]
 
-        combined_pairs = pair_reps[mask].view(B, -1, 2*D)    # Reshape to [B, num_valid_pairs, 2*D]
+    # Now we have an entity pair matrix where each [i, j] element is the pair combination
+    # of the i-th and j-th entities. We need to mask the diagonal (self-pairs).
 
-        
-        return combined_pairs
+    # Create a mask to exclude self-pairs
+    indices = torch.arange(num_entities)
+    mask = (indices.unsqueeze(0) != indices.unsqueeze(1))  # Create a mask to exclude self-pairs
+    mask = mask.unsqueeze(0).expand(B, -1, -1)           # Expand mask for all batches
+
+    combined_pairs = pair_reps[mask].view(B, -1, 2*D)    # Reshape to [B, num_valid_pairs, 2*D]
+
+    
+    return combined_pairs
 
 
 class RelMarkerv0(nn.Module):
