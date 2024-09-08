@@ -13,7 +13,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def generate_entity_pairs_indices(span_idx):
+def generate_entity_pairs_indices(span_idx, max_distance: int | None = None):
     num_entities = span_idx.size(0)  # [num_ents, 2]
 
     # Expand and tile to create all possible pairs
@@ -24,6 +24,7 @@ def generate_entity_pairs_indices(span_idx):
     indices = torch.arange(num_entities)
     indices_expanded = indices.unsqueeze(1).expand(-1, num_entities)
     indices_tiled = indices.unsqueeze(0).expand(num_entities, -1)
+
     # Create a mask to filter out self-pairs
     self_pair_mask = indices_expanded != indices_tiled
 
@@ -31,6 +32,16 @@ def generate_entity_pairs_indices(span_idx):
     span_idx_expanded_filtered = span_idx_expanded[self_pair_mask]  #  ([num_unique_pairs, 2])
     span_idx_tiled_filtered = span_idx_tiled[self_pair_mask]        #  ([num_unique_pairs, 2])
 
+    # Compute the token distance between entities (based on start indices)
+    start_idx_expanded = span_idx_expanded_filtered[:, 0]  # start index of entity in first pair
+    start_idx_tiled = span_idx_tiled_filtered[:, 0]        # start index of entity in second pair
+    token_distances = torch.abs(start_idx_expanded - start_idx_tiled)  # Calculate token distances
+
+    # Apply token distance constraint
+    if max_distance is not None:
+        distance_mask = token_distances <= max_distance
+        span_idx_expanded_filtered = span_idx_expanded_filtered[distance_mask]
+        span_idx_tiled_filtered = span_idx_tiled_filtered[distance_mask]
 
     # Stack the pairs back in shape [num_pairs, 2, 2]
     combined_pairs = torch.stack((span_idx_expanded_filtered, span_idx_tiled_filtered), dim=1)
@@ -43,6 +54,9 @@ class InstructBase(nn.Module):
         super().__init__()
         self.max_width = config.max_width
         self.base_config = config
+        self.COREFERENCE_LABEL = getattr(config, "coreference_label", "SELF")  # NOTE: this label is given a special index to denote coreference (i.e -2)
+        logger.info(f"Coreference label: {self.COREFERENCE_LABEL}")
+        self.max_entity_pair_distance = getattr(config, "max_entity_pair_distance", None)
 
     def get_dict(self, spans, classes_to_id):
         dict_tag = defaultdict(int)
@@ -94,14 +108,18 @@ class InstructBase(nn.Module):
             start, end = ner_span[0], ner_span[1]
             spans_idx.append((start, end))
 
-        MAX_SPANS = 35     # NOTE: max number of span pairs -- can be increased with more VRAM
-        if len(spans_idx) > MAX_SPANS:
-            logger.warn(f"Truncating relations and ner spans because there are too many ({len(spans_idx)} > {MAX_SPANS})")
-            spans_idx = spans_idx[: MAX_SPANS]
+        # MAX_SPANS = 35     # NOTE: max number of span pairs -- can be increased with more VRAM
+        logger.info(f"Number of spans: {len(spans_idx)}")
+        logger.info(f"Possible number of relations: {len(spans_idx) * len(spans_idx) - len(spans_idx)}")
+        # if len(spans_idx) > MAX_SPANS:
+        #     logger.warn(f"Truncating relations and ner spans because there are too many ({len(spans_idx)} > {MAX_SPANS})")
+        #     spans_idx = spans_idx[: MAX_SPANS]
         spans_idx_list = spans_idx
         
-        spans_idx = torch.LongTensor(spans_idx)                   # [num_possible_spans, 2]
-        relations_idx = generate_entity_pairs_indices(spans_idx)  # [num_ent_pairs, 2, 2]
+        spans_idx = torch.LongTensor(spans_idx)                     # [num_possible_spans, 2]
+        relations_idx = generate_entity_pairs_indices(
+            spans_idx, max_distance=self.max_entity_pair_distance)  # [num_ent_pairs, 2, 2]
+        logger.info(f"Number of entity pairs: {relations_idx.size(0)}")
 
         if relations is not None:  # training
             included_relations = []
@@ -151,9 +169,8 @@ class InstructBase(nn.Module):
     def collate_fn(self, batch_list, relation_types=None, train_relation_types=None):
 
         def _substitute_coref_label(class_to_ids):
-            _COREFERENCE_LABEL = "SELF"  # NOTE: this label is given a special index to denote coreference (i.e -2)
             for key in class_to_ids.keys():
-                if key.lower() == _COREFERENCE_LABEL.lower():
+                if key.lower() == self.COREFERENCE_LABEL.lower():
                     class_to_ids[key] = -2
 
             return class_to_ids
@@ -202,7 +219,7 @@ class InstructBase(nn.Module):
                     types = sorted(b["label"])
 
                 class_to_id = {k: v for v, k in enumerate(types, start=1)}
-                class_to_id = _substitute_coref_label(class_to_id)  # NOTE: change COREFERENCE LABEL TO -2
+                class_to_id = _substitute_coref_label(class_to_id)
                 id_to_class = {k: v for v, k in class_to_id.items()}
                 class_to_ids.append(class_to_id)
                 id_to_classes.append(id_to_class)
