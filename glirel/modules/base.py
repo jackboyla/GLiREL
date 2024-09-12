@@ -14,39 +14,56 @@ logger = logging.getLogger(__name__)
 
 
 def generate_entity_pairs_indices(span_idx, max_distance: int | None = None):
+    """
+    Generates a combined entity pair indices tensor for both coreference and relation classification.
+    Coreference pairs are unidirectional (i < j), and relation pairs are bidirectional (i ≠ j),
+    with a distance constraint for relation pairs if specified.
+
+    Args:
+        span_idx: Tensor of shape [num_entities, 2], representing the start and end indices of each entity.
+        max_distance: Integer, the maximum allowed token distance for relation classification (None for coreference).
+        
+    Returns:
+        combined_pairs: Tensor of shape [num_pairs, 2, 2], representing start/end indices for all valid entity pairs.
+    """
     num_entities = span_idx.size(0)  # [num_ents, 2]
 
     # Expand and tile to create all possible pairs
-    span_idx_expanded = span_idx.unsqueeze(1).expand(-1, num_entities, -1)  #  ([num_entities, num_entities, 2])
-    span_idx_tiled = span_idx.unsqueeze(0).expand(num_entities, -1, -1)     #  ([num_entities, num_entities, 2])
+    span_idx_expanded = span_idx.unsqueeze(1).expand(-1, num_entities, -1)  # ([num_entities, num_entities, 2])
+    span_idx_tiled = span_idx.unsqueeze(0).expand(num_entities, -1, -1)     # ([num_entities, num_entities, 2])
 
-    # we now need a mask to exclude self-pairs
+    # Indices for self-pair exclusion and directionality
     indices = torch.arange(num_entities)
     indices_expanded = indices.unsqueeze(1).expand(-1, num_entities)
     indices_tiled = indices.unsqueeze(0).expand(num_entities, -1)
 
-    # Create a mask to filter out self-pairs
-    self_pair_mask = indices_expanded != indices_tiled
+    # Coreference: unidirectional pairs (i < j)
+    coref_mask = indices_expanded < indices_tiled  # Keep only pairs where i < j
 
-    # Apply the mask to filter out self-pairs
-    span_idx_expanded_filtered = span_idx_expanded[self_pair_mask]  #  ([num_unique_pairs, 2])
-    span_idx_tiled_filtered = span_idx_tiled[self_pair_mask]        #  ([num_unique_pairs, 2])
+    # Relation pairs: bidirectional pairs, excluding self-pairs (i != j)
+    relation_mask = indices_expanded != indices_tiled
 
-    # Compute the token distance between entities (based on start indices)
-    start_idx_expanded = span_idx_expanded_filtered[:, 0]  # start index of entity in first pair
-    start_idx_tiled = span_idx_tiled_filtered[:, 0]        # start index of entity in second pair
-    token_distances = torch.abs(start_idx_expanded - start_idx_tiled)  # Calculate token distances
+    # Compute token distances between entity pairs (based on start indices)
+    start_idx_expanded = span_idx[:, 0].unsqueeze(1).expand(-1, num_entities)  # [num_entities, num_entities]
+    start_idx_tiled = span_idx[:, 0].unsqueeze(0).expand(num_entities, -1)     # [num_entities, num_entities]
+    token_distances = torch.abs(start_idx_expanded - start_idx_tiled)  # [num_entities, num_entities]
 
-    # Apply token distance constraint
+    # Apply distance constraint for relation pairs
     if max_distance is not None:
         distance_mask = token_distances <= max_distance
-        span_idx_expanded_filtered = span_idx_expanded_filtered[distance_mask]
-        span_idx_tiled_filtered = span_idx_tiled_filtered[distance_mask]
+        relation_mask = relation_mask & distance_mask
 
-    # Stack the pairs back in shape [num_pairs, 2, 2]
-    combined_pairs = torch.stack((span_idx_expanded_filtered, span_idx_tiled_filtered), dim=1)
+    # Combine coreference and relation masks
+    combined_mask = coref_mask | relation_mask  # Union of coref and relation masks
 
-    return combined_pairs  #  ([num_unique_pairs, 2 ->start_index, 2 ->end_index])
+    # Apply the combined mask to filter pairs
+    span_idx_filtered_expanded = span_idx_expanded[combined_mask]
+    span_idx_filtered_tiled = span_idx_tiled[combined_mask]
+
+    # Stack the pairs back into shape [num_pairs, 2, 2]
+    combined_pairs = torch.stack((span_idx_filtered_expanded, span_idx_filtered_tiled), dim=1)
+
+    return combined_pairs  # ([num_pairs, 2, 2])
 
 
 class InstructBase(nn.Module):
@@ -95,7 +112,7 @@ class InstructBase(nn.Module):
         max_len = self.base_config.max_len
 
         if len(tokens) > max_len:
-            logger.warn(f"Token length {len(tokens)} is longer than max length {max_len}. Truncating.")
+            logger.warning(f"Token length {len(tokens)} is longer than max length {max_len}. Truncating.")
             seq_length = max_len
             tokens = tokens[:max_len]
         else:
@@ -109,8 +126,6 @@ class InstructBase(nn.Module):
             spans_idx.append((start, end))
 
         # MAX_SPANS = 35     # NOTE: max number of span pairs -- can be increased with more VRAM
-        logger.info(f"Number of spans: {len(spans_idx)}")
-        logger.info(f"Possible number of relations: {len(spans_idx) * len(spans_idx) - len(spans_idx)}")
         # if len(spans_idx) > MAX_SPANS:
         #     logger.warn(f"Truncating relations and ner spans because there are too many ({len(spans_idx)} > {MAX_SPANS})")
         #     spans_idx = spans_idx[: MAX_SPANS]
@@ -119,7 +134,6 @@ class InstructBase(nn.Module):
         spans_idx = torch.LongTensor(spans_idx)                     # [num_possible_spans, 2]
         relations_idx = generate_entity_pairs_indices(
             spans_idx, max_distance=self.max_entity_pair_distance)  # [num_ent_pairs, 2, 2]
-        logger.info(f"Number of entity pairs: {relations_idx.size(0)}")
 
         if relations is not None:  # training
             included_relations = []
@@ -167,6 +181,9 @@ class InstructBase(nn.Module):
         return out
 
     def collate_fn(self, batch_list, relation_types=None, train_relation_types=None):
+        assert hasattr(self.base_config, "fixed_relation_types"), "`fixed_relation_types` must be set in config"
+        class_to_ids = []
+        id_to_classes = []
 
         def _substitute_coref_label(class_to_ids):
             for key in class_to_ids.keys():
@@ -179,8 +196,6 @@ class InstructBase(nn.Module):
         if relation_types is None:
             assert train_relation_types is not None, "`train_relation_types` must be provided for relation extraction data loader"
             negs = self.get_negatives_rel(train_relation_types, 100)
-            class_to_ids = []
-            id_to_classes = []
             for b in batch_list:
                 # negs = b["negative"]
                 random.shuffle(negs)
@@ -211,7 +226,7 @@ class InstructBase(nn.Module):
                     num_rels = random.randint(1, len(types))
                     types = types[ :num_rels]
 
-                types = types[ : 35] # self.base_config.num_train_rel_types
+                types = types[ : self.base_config.num_train_rel_types]
 
 
                 # supervised training
@@ -229,11 +244,28 @@ class InstructBase(nn.Module):
             ]
 
         else:
-            class_to_ids = {k: v for v, k in enumerate(relation_types, start=1)}
-            class_to_ids = _substitute_coref_label(class_to_id)  # NOTE: change COREFERENCE LABEL TO -2
-            id_to_classes = {k: v for v, k in class_to_ids.items()}
+            # evaluation
+            if self.base_config.fixed_relation_types is True:
+                # relation labels are fixed across all batches, e.g for evaluating m=15, etc
+                class_to_ids = {k: v for v, k in enumerate(relation_types, start=1)}
+                class_to_ids = _substitute_coref_label(class_to_id)  # NOTE: change COREFERENCE LABEL TO -2
+                id_to_classes = {k: v for v, k in class_to_ids.items()}
+                class_to_ids = [class_to_ids] * len(batch_list)
+                id_to_classes = [id_to_classes] * len(batch_list)
+            else:
+                # relation labels are different for each batch
+                for b in batch_list:
+                    instance_relation_types = ([el['relation_text'] for el in b['relations']])
+                    class_to_id = {k: v for v, k in enumerate(instance_relation_types, start=1)}
+                    class_to_id = _substitute_coref_label(class_to_id)  # NOTE: change COREFERENCE LABEL TO -2
+                    id_to_class = {k: v for v, k in class_to_id.items()}
+                    class_to_ids.append(class_to_id)
+                    id_to_classes.append(id_to_class)
+                logger.info(f"Number of eval relation types per instance: {[len(d) for d in class_to_ids]}")
+
+            
             batch = [
-                self.preprocess_spans(b["tokenized_text"], b["ner"], class_to_ids, b.get('relations')) for b in batch_list
+                self.preprocess_spans(b["tokenized_text"], b["ner"], class_to_ids[i], b.get('relations')) for i, b in enumerate(batch_list)
             ]
 
         span_idx = pad_sequence(
@@ -247,7 +279,10 @@ class InstructBase(nn.Module):
         rel_label = pad_sequence(
             [el['rel_label'] for el in batch], batch_first=True, padding_value=-1
         )
-        
+
+        relations_idx = pad_sequence(
+            [el['relations_idx'] for el in batch], batch_first=True, padding_value=-1
+        )
 
         return {
             'seq_length': torch.LongTensor([el['seq_length'] for el in batch]),
@@ -256,7 +291,7 @@ class InstructBase(nn.Module):
             'span_mask': span_label != -1,
             'span_label': span_label,
             'rel_label': rel_label if 'rel_label' in locals() else None,
-            'relations_idx': [el['relations_idx'] for el in batch],
+            'relations_idx': relations_idx,
             'entities': [el['entities'] for el in batch],
             'relations': [el.get('relations') for el in batch],
             'classes_to_id': class_to_ids,

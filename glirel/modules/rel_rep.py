@@ -76,79 +76,49 @@ def get_entity_pair_reps(entity_reps, **kwargs):
     return combined_pairs
 
 
-def get_entity_pair_reps_v2(entity_reps, span_idx, max_distance=None):
+def get_entity_pair_reps_v2(entity_reps, span_idx, relations_idx):
     """
-    Generates entity pair representations separately for coreference (unidirectional, without max distance constraint)
-    and for relation classification (bidirectional, with max distance constraint).
+    Generates entity pair representations based on the given relation indices.
     
     Args:
         entity_reps: Tensor of shape [B, num_entities, D], representing the entity representations.
         span_idx: Tensor of shape [B, num_entities, 2], representing the start and end indices of each entity.
-        max_distance: Integer, the maximum allowed token distance for relation classification (None for coreference).
+        relations_idx: Tensor of shape [B, num_relations, 2, 2], where the last two indices 
+                      are the start and end indices of an entity pair (e.g. [[0, 4], [6, 8]]).
         
     Returns:
-        coref_pairs: Tensor of shape [B, num_coref_pairs, 2 * D], representing the coreferent entity pair representations.
-        relation_pairs: Tensor of shape [B, num_relation_pairs, 2 * D], representing the relation entity pair representations.
+        relation_pairs: Tensor of shape [B, num_relations, 2 * D], representing the relation 
+                        entity pair representations.
     """
     B, num_entities, D = entity_reps.shape
+    _, num_relations, _, _ = relations_idx.shape
 
-    # Get start indices of each entity span from span_idx (shape: [B, num_entities])
-    start_idx = span_idx[:, :, 0]
+    # Extract start and end token indices for head and tail from relations_idx
+    head_start_tokens = relations_idx[:, :, 0, 0]  # [B, num_relations]
+    head_end_tokens = relations_idx[:, :, 0, 1]  # [B, num_relations]
+    tail_start_tokens = relations_idx[:, :, 1, 0]  # [B, num_relations]
+    tail_end_tokens = relations_idx[:, :, 1, 1]  # [B, num_relations]
 
-    # Compute token distance between entity pairs
-    start_idx_expanded = start_idx.unsqueeze(2).expand(-1, -1, num_entities)  # [B, num_entities, num_entities]
-    start_idx_tiled = start_idx.unsqueeze(1).expand(-1, num_entities, -1)     # [B, num_entities, num_entities]
-    token_distances = torch.abs(start_idx_expanded - start_idx_tiled)         # [B, num_entities, num_entities]
+    # Extract start and end token indices for each entity in span_idx
+    entity_starts = span_idx[:, :, 0]  # [B, num_entities]
+    entity_ends = span_idx[:, :, 1]    # [B, num_entities]
 
-    # Create a mask to exclude self-pairs and ensure unidirectional pairs for coreference (i < j)
-    indices = torch.arange(num_entities, device=entity_reps.device)
-    self_pair_mask = indices.unsqueeze(0) < indices.unsqueeze(1)  # Unidirectional: Only keep (i, j) where i < j
+    # Create masks to identify which entity each token belongs to
+    head_mask = (head_start_tokens.unsqueeze(2) == entity_starts.unsqueeze(1)) & (head_end_tokens.unsqueeze(2) == entity_ends.unsqueeze(1))  # [B, num_relations, num_entities]
+    tail_mask = (tail_start_tokens.unsqueeze(2) == entity_starts.unsqueeze(1)) & (tail_end_tokens.unsqueeze(2) == entity_ends.unsqueeze(1))  # [B, num_relations, num_entities]
 
-    # Generate all valid entity pairs for coreference (no distance constraint, unidirectional)
-    coref_mask = self_pair_mask.unsqueeze(0).expand(B, -1, -1)
+    # Use argmax to get the indices of the entities that match the tokens in head and tail
+    head_entity_indices = torch.argmax(head_mask.int(), dim=2)  # [B, num_relations]
+    tail_entity_indices = torch.argmax(tail_mask.int(), dim=2)  # [B, num_relations]
 
-    # Get the indices of valid coreference pairs
-    valid_coref_pairs = torch.nonzero(coref_mask, as_tuple=False)  # Shape: [num_coref_pairs, 3] -> [batch_idx, i, j]
+    # Gather the entity representations using the found indices
+    head_entity_reps = torch.gather(entity_reps, 1, head_entity_indices.unsqueeze(-1).expand(-1, -1, D))  # [B, num_relations, D]
+    tail_entity_reps = torch.gather(entity_reps, 1, tail_entity_indices.unsqueeze(-1).expand(-1, -1, D))  # [B, num_relations, D]
 
-    # Extract the valid coreference entity representations using advanced indexing
-    coref_batch_indices = valid_coref_pairs[:, 0]
-    coref_i_indices = valid_coref_pairs[:, 1]
-    coref_j_indices = valid_coref_pairs[:, 2]
+    # Concatenate head and tail representations for each relation
+    relation_pairs = torch.cat([head_entity_reps, tail_entity_reps], dim=-1)  # [B, num_relations, 2 * D]
 
-    entity_reps_i_coref = entity_reps[coref_batch_indices, coref_i_indices]  # Shape: [num_coref_pairs, D]
-    entity_reps_j_coref = entity_reps[coref_batch_indices, coref_j_indices]  # Shape: [num_coref_pairs, D]
-
-    # Concatenate coreference entity representations
-    coref_pairs = torch.cat([entity_reps_i_coref, entity_reps_j_coref], dim=1)  # Shape: [num_coref_pairs, 2 * D]
-
-    # For relations, apply the token distance constraint (bidirectional)
-    if max_distance is not None:
-        distance_mask = token_distances <= max_distance  # Apply distance constraint
-        relation_mask = self_pair_mask.unsqueeze(0).expand(B, -1, -1) | self_pair_mask.t().unsqueeze(0)  # Allow both (i, j) and (j, i)
-        relation_mask = relation_mask & distance_mask  # Combine masks
-    else:
-        relation_mask = self_pair_mask.unsqueeze(0).expand(B, -1, -1)
-
-    # Get the indices of valid relation pairs
-    valid_relation_pairs = torch.nonzero(relation_mask, as_tuple=False)  # Shape: [num_relation_pairs, 3] -> [batch_idx, i, j]
-
-    # Extract the valid relation entity representations using advanced indexing
-    relation_batch_indices = valid_relation_pairs[:, 0]
-    relation_i_indices = valid_relation_pairs[:, 1]
-    relation_j_indices = valid_relation_pairs[:, 2]
-
-    entity_reps_i_relation = entity_reps[relation_batch_indices, relation_i_indices]  # Shape: [num_relation_pairs, D]
-    entity_reps_j_relation = entity_reps[relation_batch_indices, relation_j_indices]  # Shape: [num_relation_pairs, D]
-
-    # Concatenate relation entity representations
-    relation_pairs = torch.cat([entity_reps_i_relation, entity_reps_j_relation], dim=1)  # Shape: [num_relation_pairs, 2 * D]
-
-    # Reshape coreference and relation pairs to [B, num_valid_pairs, 2 * D]
-    coref_pairs = coref_pairs.view(B, -1, 2 * D)
-    relation_pairs = relation_pairs.view(B, -1, 2 * D)
-
-    return coref_pairs, relation_pairs
-
+    return relation_pairs
 
 
 class RelMarkerv0(nn.Module):
@@ -161,7 +131,7 @@ class RelMarkerv0(nn.Module):
 
         self.out_project = create_projection_layer(hidden_size * 2, dropout, hidden_size)
 
-    def forward(self, h: torch.Tensor, span_idx: torch.Tensor) -> torch.Tensor:
+    def forward(self, h: torch.Tensor, span_idx: torch.Tensor, relations_idx: torch.Tensor) -> torch.Tensor:
         """
         h: torch.Tensor - The hidden states of the shape [batch_size, seq_len, hidden_size]
         span_idx: torch.Tensor - The span indices of entities of the shape [batch_size, num_entities, 2]
@@ -170,7 +140,7 @@ class RelMarkerv0(nn.Module):
         # [B, num_entities, 2]  -->  span_idx.size()
         entity_reps = self.span_marker(h, span_idx)  #  ([B, number_of_entities, D])  
 
-        combined_pairs = get_entity_pair_reps(entity_reps)
+        combined_pairs = get_entity_pair_reps_v2(entity_reps, span_idx=span_idx, relations_idx=relations_idx)
 
         # combined_pairs is now a tensor of shape [batch_size, num_pairs, 2*hidden_size]
         # where num_pairs is num_entities * (num_entities - 1) / 2, the number of unique pairs.
@@ -194,6 +164,6 @@ class RelRepLayer(nn.Module):
         else:
             raise ValueError(f'Unknown rel mode {rel_mode}')
 
-    def forward(self, x, *args):
+    def forward(self, x, *args, **kwargs):
 
-        return self.rel_rep_layer(x, *args)
+        return self.rel_rep_layer(x, *args, **kwargs)
