@@ -265,7 +265,7 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
 
         # check if loss is nan
         if torch.isnan(loss):
-            logger.warn(f"Loss is NaN at step {step}")
+            logger.warning(f"Loss is NaN at step {step}")
             continue
 
         if config.gradient_accumulation is not None:
