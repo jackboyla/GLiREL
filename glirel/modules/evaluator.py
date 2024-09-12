@@ -7,6 +7,7 @@ from seqeval.metrics.v1 import _prf_divide
 
 
 def extract_tp_actual_correct(y_true, y_pred):
+    # y_pred[0] -> ['work location', (19, 20), (23, 24), 0]
     relations_true = defaultdict(set)
     relations_pred = defaultdict(set)
 
