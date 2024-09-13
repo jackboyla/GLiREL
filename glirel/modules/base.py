@@ -247,15 +247,15 @@ class InstructBase(nn.Module):
             # evaluation
             if self.base_config.fixed_relation_types is True:
                 # relation labels are fixed across all batches, e.g for evaluating m=15, etc
-                class_to_ids = {k: v for v, k in enumerate(relation_types, start=1)}
-                class_to_ids = _substitute_coref_label(class_to_id)  # NOTE: change COREFERENCE LABEL TO -2
-                id_to_classes = {k: v for v, k in class_to_ids.items()}
-                class_to_ids = [class_to_ids] * len(batch_list)
-                id_to_classes = [id_to_classes] * len(batch_list)
+                class_to_id = {k: v for v, k in enumerate(relation_types, start=1)}
+                class_to_id = _substitute_coref_label(class_to_id)  # NOTE: change COREFERENCE LABEL TO -2
+                id_to_class = {k: v for v, k in class_to_id.items()}
+                class_to_ids = [class_to_id] * len(batch_list)
+                id_to_classes = [id_to_class] * len(batch_list)
             else:
                 # relation labels are different for each batch
                 for b in batch_list:
-                    instance_relation_types = ([el['relation_text'] for el in b['relations']])
+                    instance_relation_types = list(set([el['relation_text'] for el in b['relations']]))
                     class_to_id = {k: v for v, k in enumerate(instance_relation_types, start=1)}
                     class_to_id = _substitute_coref_label(class_to_id)  # NOTE: change COREFERENCE LABEL TO -2
                     id_to_class = {k: v for v, k in class_to_id.items()}
