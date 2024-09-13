@@ -123,7 +123,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
         return optimizer
 
-    def compute_score_train(self, x):
+    def compute_score(self, x):
 
         span_idx = x['span_idx'] * x['span_mask'].unsqueeze(-1)  # ([B, num_possible_spans, 2])  *  ([B, num_possible_spans, 1])
 
@@ -266,7 +266,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
     def forward(self, x):
         # compute span representation
-        scores, num_classes, rel_type_mask, coref_scores = self.compute_score_train(x)
+        scores, num_classes, rel_type_mask, coref_scores = self.compute_score(x)
         batch_size = scores.size(0)
 
 
@@ -324,107 +324,6 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         return {'total_loss': total_loss} # total_loss is rel_loss if no coref_classifier
 
 
-    def compute_score_eval(self, x, device):
-        batch_size = len(x['tokens'])
-        
-        span_idx = (x['span_idx'] * x['span_mask'].unsqueeze(-1)).to(device)
-
-        new_length = x['seq_length'].clone()
-        new_tokens = []
-        all_len_prompt = []
-        num_classes_all = []
-
-        # Add prompt to the tokens for each instance
-        for i in range(batch_size):
-            all_types_i = list(x['classes_to_id'][i].keys())
-            entity_prompt = []
-            num_classes_all.append(len(all_types_i))
-
-            # Add entity types to prompt for each instance
-            for relation_type in all_types_i:
-                entity_prompt.append(self.rel_token)
-                entity_prompt.append(relation_type)
-
-            entity_prompt.append(self.sep_token)
-
-            # Add prompt to the tokens
-            tokens_p = entity_prompt + x['tokens'][i]
-
-            # Update the sequence length with the prompt length
-            new_length[i] = new_length[i] + len(entity_prompt)
-            new_tokens.append(tokens_p)
-            all_len_prompt.append(len(entity_prompt))
-
-
-        # Create a mask using num_classes_all (True for valid classes, False otherwise)
-        max_num_classes = max(num_classes_all)
-        rel_type_mask = torch.arange(max_num_classes).unsqueeze(0).expand(batch_size, -1).to(device)
-        rel_type_mask = rel_type_mask < torch.tensor(num_classes_all).unsqueeze(-1).to(device)
-
-        # Pass tokens through the token representation layer (e.g., BERT)
-        bert_output = self.token_rep_layer(new_tokens, new_length)
-        word_rep_w_prompt = bert_output["embeddings"]
-        mask_w_prompt = bert_output["mask"]
-
-        # Extract word representation (after [SEP]) and relation type representation (before [SEP])
-        word_rep = []
-        mask = []
-        rel_type_rep = []
-        for i in range(batch_size):
-            prompt_entity_length = all_len_prompt[i]
-
-            # Get word representations after the [SEP] token
-            word_rep.append(word_rep_w_prompt[i, prompt_entity_length:prompt_entity_length + x['seq_length'][i]])
-
-            # Get mask after the [SEP] token
-            mask.append(mask_w_prompt[i, prompt_entity_length:prompt_entity_length + x['seq_length'][i]])
-
-            # Get entity type representation (before [SEP]), taking every second token for the relation types
-            relation_rep = word_rep_w_prompt[i, :prompt_entity_length - 1]
-            relation_rep = relation_rep[0::2]
-            rel_type_rep.append(relation_rep)
-
-        # Pad sequences to handle different lengths
-        word_rep = pad_sequence(word_rep, batch_first=True)
-        mask = pad_sequence(mask, batch_first=True)
-        rel_type_rep = pad_sequence(rel_type_rep, batch_first=True)
-
-        word_rep = self.rnn(word_rep, mask)
-        rel_rep = self.span_rep_layer(word_rep, span_idx=span_idx, relations_idx=x['relations_idx'])
-
-
-        # refine relation representation ##############################################
-        relation_classes = x['rel_label']  # [B, num_entity_pairs]
-        rel_rep_mask = relation_classes >= 0
-        ################################################################################
-
-        if hasattr(self, "refine_relation"):
-            # refine relation representation
-            rel_rep = self.refine_relation(
-                rel_rep, word_rep, rel_rep_mask, mask
-            )
-
-        if hasattr(self, "refine_prompt"):
-            # refine relation representation with relation type representation ############
-            rel_type_rep = self.refine_prompt(
-                rel_type_rep, rel_rep, rel_type_mask, rel_rep_mask
-            )
-        ################################################################################
-
-
-        # Coreference Resolution ##############################
-        if hasattr(self, "coref_classifier"):
-            coref_scores = self.coref_classifier(rel_rep)  # (B, num_pairs, 1)
-        else:
-            coref_scores = None
-        ###############################################################
-        
-        # similarity score
-        local_scores = self.scorer(rel_rep, rel_type_rep) # ([B, num_pairs, num_classes])
-
-        return local_scores, coref_scores
-
-
     def aggregate_relations_using_coreference(self, relations):
         """
         
@@ -434,12 +333,14 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
     @torch.no_grad()
     def predict(self, x, flat_ner=False, threshold=0.5, ner=None):
         self.eval()
-        local_scores, coref_scores = self.compute_score_eval(x, device=next(self.parameters()).device)
+        local_scores, num_classes, rel_type_mask, coref_scores = self.compute_score(x, device=next(self.parameters()).device)
 
         # TODO: Aggrergate relations using coreference
 
         assert isinstance(ner, list), "ner should be a list of list of spans like [[(1, 2, 'PER'), (3, 4, 'ORG'), ...], ]"
 
+        # if isinstance(x['classes_to_id'], dict):
+        #     x['classes_to_id'] = [x['classes_to_id']] * len(x['tokens'])
         rels = []
         for i, _ in enumerate(x["tokens"]):
             local_i = local_scores[i]  # Predictions for the i-th item in the batch
