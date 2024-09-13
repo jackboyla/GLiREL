@@ -72,12 +72,14 @@ def expand_labels(doc):
                     'head': {
                         'name': head_mention['name'],
                         'position': [head_start_index, head_end_index],
-                        'type': head_mention['type']
+                        'type': head_mention['type'],
+                        'h_idx': head_id
                     },
                     'tail': {
                         'name': tail_mention['name'],
                         'position': [tail_start_index, tail_end_index],
-                        'type': tail_mention['type']
+                        'type': tail_mention['type'],
+                        't_idx': tail_id
                     },
                     'relation_id': relation_id,
                     'relation_text': relation_text,
@@ -87,7 +89,7 @@ def expand_labels(doc):
 
 
     # Add SELF relations for mentions within the same entity cluster
-    for entity_mentions in doc['vertexSet']:
+    for cluster_idx, entity_mentions in enumerate(doc['vertexSet']):
 
         for i, head_mention in enumerate(entity_mentions):
             head_start_index, head_end_index = get_cumulative_position(head_mention, cumulative_sentence_lengths)
@@ -101,12 +103,14 @@ def expand_labels(doc):
                         'head': {
                             'name': head_mention['name'],
                             'position': [head_start_index, head_end_index],
-                            'type': head_mention['type']
+                            'type': head_mention['type'],
+                            'h_idx': cluster_idx
                         },
                         'tail': {
                             'name': tail_mention['name'],
                             'position': [tail_start_index, tail_end_index],
-                            'type': tail_mention['type']
+                            'type': tail_mention['type'],
+                            't_idx': cluster_idx
                         },
                         'relation_id': 'SELF',
                         'relation_text': 'SELF',
@@ -147,7 +151,7 @@ for SPLIT in ['train_annotated', 'validation', 'test']: # train_distant
     for i in tqdm(range(len(dataset[SPLIT]))):
         doc = dataset[SPLIT][i]
         doc_lens.append(sum(len(s) for s in doc['sents']))
-        example_row = {}
+        example_row = {'title': doc['title']}
 
         # Combine the list of sentences into one list of tokens
         example_row['tokenized_text'] = [token for sentence in doc['sents'] for token in sentence]
