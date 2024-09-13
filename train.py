@@ -190,11 +190,10 @@ def dirty_split_data_by_relation_type(data, num_unseen_rel_types, max_test_size)
 
 
 # train function
-def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, eval_every=100, top_k=1, log_dir=None,
+def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types, eval_data=None, 
+          num_steps=1000, eval_every=100, top_k=1, log_dir=None,
           wandb_log=False, wandb_sweep=False, warmup_ratio=0.1, train_batch_size=8, device='cuda', use_amp=True):
-    
-    train_rel_types = get_unique_relations(train_data)
-    eval_rel_types = get_unique_relations(eval_data) if eval_data is not None else None
+
     max_saves = 2  # Maximum number of saved models
 
     if wandb_log:
@@ -253,7 +252,8 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
 
         with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=use_amp):
             try:
-                loss = model(x)  # Forward pass
+                out = model(x)  # Forward pass
+                loss, coref_loss, rel_loss = out['total_loss'], out.get('coref_loss', None), out.get('rel_loss', None)
             except Exception as e:
                 logger.error(f"Error in step {step}: {e}")
                 logger.error(f"Num tokens: {[len(x['tokens'][i]) for i in range(len(x['tokens']))]}")
@@ -282,7 +282,12 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
             continue
 
         num_tokens = [len(x['tokens'][i]) for i in range(len(x['tokens']))]
-        logger.info(f"Step {step} | loss: {loss.item()} | x['rel_label']: {x['rel_label'].shape} | x['span_idx']: {x['span_idx'].shape} | x['tokens']: {num_tokens} | num candidate_classes: {len(x['classes_to_id'][0].keys())}")
+        candidate_classes = [x['classes_to_id'][i] for i in range(len(x['classes_to_id']))]
+        status = f"Step {step} | loss: {loss.item()}"
+        if coref_loss is not None:
+            status += f" | coref_loss: {coref_loss.item()} | rel_loss: {rel_loss.item()}"
+        status += f" | x['rel_label']: {x['rel_label'].shape} | x['span_idx']: {x['span_idx'].shape} | x['tokens']: {num_tokens} | num candidate_classes: {[len(x['classes_to_id'][i]) for i in range(len(x['classes_to_id']))]}"
+        logger.info(status)
 
         accumulated_steps += 1
         if config.gradient_accumulation is None or (accumulated_steps % config.gradient_accumulation == 0):
@@ -339,7 +344,7 @@ def train(model, optimizer, train_data, config, eval_data=None, num_steps=1000, 
                         flat_ner=True, 
                         threshold=config.eval_threshold, 
                         batch_size=config.eval_batch_size,
-                        relation_types=eval_rel_types,
+                        relation_types=eval_rel_types if config.fixed_relation_types else [],
                         top_k=top_k
                     )
 
@@ -481,6 +486,8 @@ def main(args):
         eval_data = eval_data
         train_data = data
 
+    # train_data = train_data[:10]
+    # eval_data = train_data[:10]
 
     train_rel_types = get_unique_relations(train_data)
     eval_rel_types = get_unique_relations(eval_data) if eval_data is not None else None
@@ -524,7 +531,8 @@ def main(args):
     logger.info(f"Using config: \n{json.dumps(config.__dict__, indent=2)}\n\n")
 
 
-    train(model, optimizer, data, config, eval_data=eval_data, num_steps=config.num_steps, eval_every=config.eval_every, top_k=config.top_k,
+    train(model, optimizer, data, config, train_rel_types=train_rel_types, eval_rel_types=eval_rel_types, eval_data=eval_data,
+          num_steps=config.num_steps, eval_every=config.eval_every, top_k=config.top_k,
           log_dir=config.log_dir, wandb_log=args.wandb_log, wandb_sweep=args.wandb_sweep, warmup_ratio=config.warmup_ratio, train_batch_size=config.train_batch_size,
           device=device, use_amp=use_amp)
 
