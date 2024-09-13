@@ -95,6 +95,8 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         # scoring layer
         self.scorer = ScorerLayer(config.scorer, hidden_size=config.hidden_size, dropout=config.dropout)
 
+        self.device = next(self.parameters()).device
+
     def get_optimizer(self, lr_encoder, lr_others, freeze_token_rep=False):
         """
         Parameters:
@@ -125,7 +127,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
     def compute_score(self, x):
 
-        span_idx = x['span_idx'] * x['span_mask'].unsqueeze(-1)  # ([B, num_possible_spans, 2])  *  ([B, num_possible_spans, 1])
+        span_idx = x['span_idx'] * x['span_mask'].unsqueeze(-1).to(self.device)  # ([B, num_possible_spans, 2])  *  ([B, num_possible_spans, 1])
 
         new_length = x['seq_length'].clone()
         new_tokens = []
@@ -333,7 +335,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
     @torch.no_grad()
     def predict(self, x, flat_ner=False, threshold=0.5, ner=None):
         self.eval()
-        local_scores, num_classes, rel_type_mask, coref_scores = self.compute_score(x, device=next(self.parameters()).device)
+        local_scores, num_classes, rel_type_mask, coref_scores = self.compute_score(x)
 
         # TODO: Aggrergate relations using coreference
 
