@@ -7,6 +7,7 @@ from typing import Dict, Optional, Union
 import torch
 import torch.nn.functional as F
 import yaml
+from tqdm import tqdm
 from glirel.modules.layers import LstmSeq2SeqEncoder, ScorerLayer, FilteringLayer, RefineLayer
 from glirel.modules.base import InstructBase
 from glirel.modules.evaluator import greedy_search, RelEvaluator
@@ -22,11 +23,6 @@ from typing import List, Dict, Union
 import logging
 
 logger = logging.getLogger(__name__)
-
-logging.basicConfig(level=logging.INFO, 
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                    handlers=[logging.StreamHandler()])
-
 
 
 class GLiREL(InstructBase, PyTorchModelHubMixin):
@@ -313,13 +309,19 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
             else:
                 # compute coreference loss (masked for coreference labels only)
                 coref_scores = coref_scores.view(-1)                                # Flatten coref_scores to match label shape (B * num_pairs * 1)
-                coref_ground_truth = labels.masked_fill(~coref_mask, 0).float()     # Mask out non-coref labels
 
-                coref_loss = self.compute_coref_loss(coref_scores[coref_mask], coref_ground_truth[coref_mask])
+                # Prepare coref_ground_truth with valid target values (i.e, set -2 -> 1 and others -> 0)
+                coref_ground_truth = torch.zeros_like(labels, dtype=torch.float32)
+                coref_ground_truth[coref_mask] = 1.0
+
+                valid_mask = (labels != -1)
+
+                coref_loss = self.compute_coref_loss(coref_scores[valid_mask], coref_ground_truth[valid_mask])
                 coref_loss = self.config.coref_loss_weight * coref_loss
                 total_loss += coref_loss
+                return {'total_loss': total_loss, 'coref_loss': coref_loss, 'rel_loss': rel_loss}
 
-        return total_loss
+        return {'total_loss': total_loss} # total_loss is rel_loss if no coref_classifier
 
 
     def compute_score_eval(self, x, device):
@@ -562,7 +564,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         return all_relations
 
 
-    def evaluate(self, test_data, flat_ner=False, threshold=0.5, batch_size=12, relation_types=None, top_k=1):
+    def evaluate(self, test_data, flat_ner=False, threshold=0.5, batch_size=12, relation_types=None, top_k=1, return_preds=False):
         self.eval()
         logger.info(f"Number of classes to evaluate with --> {len(relation_types)}")
         data_loader = self.create_dataloader(test_data, batch_size=batch_size, relation_types=relation_types, shuffle=False)
@@ -617,6 +619,8 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         evaluator = RelEvaluator(all_trues, all_preds)
         out, micro_f1, macro_f1 = evaluator.evaluate()
         
+        if return_preds:
+            return out, micro_f1, macro_f1, all_preds
         return out, micro_f1, macro_f1
 
 
