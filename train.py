@@ -445,7 +445,7 @@ def main(args):
             config.eval_data = [config.eval_data]
 
         eval_data = []
-        for eval_subset in config.train_data:
+        for eval_subset in config.eval_data:
             if eval_subset.endswith('.jsonl'):
                 with open(eval_subset, 'r') as f:
                     eval_subset = [json.loads(line) for line in f]
@@ -531,7 +531,7 @@ def main(args):
     logger.info(f"Using config: \n{json.dumps(config.__dict__, indent=2)}\n\n")
 
 
-    train(model, optimizer, data, config, train_rel_types=train_rel_types, eval_rel_types=eval_rel_types, eval_data=eval_data,
+    train(model, optimizer, train_data, config, train_rel_types=train_rel_types, eval_rel_types=eval_rel_types, eval_data=eval_data,
           num_steps=config.num_steps, eval_every=config.eval_every, top_k=config.top_k,
           log_dir=config.log_dir, wandb_log=args.wandb_log, wandb_sweep=args.wandb_sweep, warmup_ratio=config.warmup_ratio, train_batch_size=config.train_batch_size,
           device=device, use_amp=use_amp)
