@@ -202,7 +202,7 @@ def official_evaluate(tmp, path, train_file, dev_file):
             continue
         vertexSet = title2vectexSet[title]
 
-        if 'evidence' in x:
+        if 'evidence' in x and x['evidence'] is not None:
             evi = set(x['evidence'])
         else:
             evi = set([])
