@@ -73,7 +73,8 @@ class InstructBase(nn.Module):
         self.base_config = config
         self.COREFERENCE_LABEL = getattr(config, "coreference_label", "SELF")  # NOTE: this label is given a special index to denote coreference (i.e -2)
         logger.info(f"Coreference label: {self.COREFERENCE_LABEL}")
-        self.max_entity_pair_distance = getattr(config, "max_entity_pair_distance", None)
+        self.max_entity_pair_distance = config.max_entity_pair_distance
+        logger.info(f"Max entity pair distance: {self.max_entity_pair_distance}")
 
     def get_dict(self, spans, classes_to_id):
         dict_tag = defaultdict(int)
@@ -188,7 +189,7 @@ class InstructBase(nn.Module):
         def _substitute_coref_label(class_to_ids):
             for key in class_to_ids.keys():
                 if key.lower() == self.COREFERENCE_LABEL.lower():
-                    class_to_ids[key] = -2
+                    class_to_ids[key] = class_to_ids[key] * -50
 
             return class_to_ids
 
@@ -248,7 +249,7 @@ class InstructBase(nn.Module):
             if self.base_config.fixed_relation_types is True:
                 # relation labels are fixed across all batches, e.g for evaluating m=15, etc
                 class_to_id = {k: v for v, k in enumerate(relation_types, start=1)}
-                class_to_id = _substitute_coref_label(class_to_id)  # NOTE: change COREFERENCE LABEL TO -2
+                # class_to_id = _substitute_coref_label(class_to_id)  # NOTE: change COREFERENCE LABEL TO -2
                 id_to_class = {k: v for v, k in class_to_id.items()}
                 class_to_ids = [class_to_id] * len(batch_list)
                 id_to_classes = [id_to_class] * len(batch_list)
@@ -257,7 +258,7 @@ class InstructBase(nn.Module):
                 for b in batch_list:
                     instance_relation_types = list(set([el['relation_text'] for el in b['relations']]))
                     class_to_id = {k: v for v, k in enumerate(instance_relation_types, start=1)}
-                    class_to_id = _substitute_coref_label(class_to_id)  # NOTE: change COREFERENCE LABEL TO -2
+                    # class_to_id = _substitute_coref_label(class_to_id)  # NOTE: change COREFERENCE LABEL TO -2
                     id_to_class = {k: v for v, k in class_to_id.items()}
                     class_to_ids.append(class_to_id)
                     id_to_classes.append(id_to_class)
