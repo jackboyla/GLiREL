@@ -1,0 +1,58 @@
+# Learning Rate
+lr_encoder: 1e-5
+lr_others: 1e-4
+
+# Training Parameters
+num_steps: 100000
+warmup_ratio: 0.1
+train_batch_size: 8
+eval_every: 300
+gradient_accumulation: null
+eval_batch_size: 16
+
+# Model Configuration
+max_width: 12
+model_name: microsoft/deberta-v3-large # hugging face model
+fine_tune: true
+subtoken_pooling: first
+hidden_size: 768
+scorer: "dot"
+span_mode: marker
+refine_prompt: false
+refine_relation: false
+ffn_mul: 4
+dropout: 0.4
+scheduler: "cosine_with_warmup"  # "cosine_with_hard_restarts"
+loss_func: "binary_cross_entropy_loss"  # "binary_cross_entropy_loss"  # "focal_loss"
+# alpha: 0.25
+# gamma: 2
+
+# Coreference Resolution
+coref_classifier: false
+coref_loss_weight: 10.0
+
+# Directory Paths
+dataset_name: "redocred"
+root_dir: ablation_backbone
+train_data: "data/redocred_train.jsonl"
+eval_data: "data/redocred_dev.jsonl"
+
+# "none" if no pretrained model 
+prev_path: "none"
+
+
+# Training Specifics
+size_sup: -1
+num_train_rel_types: 25   # number of relation labels to use in each given mini-batch
+top_k: 1                  # number of relations predictions to return at evaluation time
+random_drop: false        # randomly drop relation types
+max_len: 512
+eval_threshold: 0.01
+max_entity_pair_distance: 50
+# fixed_relation_types: true  # for eval: only use the given list of relation types (FewRel) for all batches
+fixed_relation_types: false   # for eval: use all relation types of a given batch (DocRED)
+num_unseen_rel_types: 15      # for eval: will be ignored if `fixed_relation_types` is false
+
+name: "large"
+
+

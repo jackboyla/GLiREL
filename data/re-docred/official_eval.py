@@ -4,12 +4,6 @@ import os
 import os.path
 import json
 
-"""
-"result.json"(your result file) is placed in input_dir/res/
-"dev_dev.json"(the annotated data) is placed in input_dir/ref/
-"train_annotated.json" and "train_distant.json" is placed in ../data/ for computed ignore scores.
-"""
-
 def gen_train_facts(data_file_name, truth_dir):
     fact_file_name = data_file_name[data_file_name.find("train_"):]
     fact_file_name = os.path.join(truth_dir, fact_file_name.replace(".json", ".fact"))
@@ -22,7 +16,7 @@ def gen_train_facts(data_file_name, truth_dir):
         return fact_in_train
 
     fact_in_train = set([])
-    ori_data = json.load(open(data_file_name))
+    ori_data = json.load(open( data_file_name))
     for data in ori_data:
         vertexSet = data['vertexSet']
         for label in data['labels']:
@@ -35,26 +29,21 @@ def gen_train_facts(data_file_name, truth_dir):
 
     return fact_in_train
 
-input_dir = sys.argv[1]
-output_dir = sys.argv[2]
+output_dir = 'data/re-docred/scores'
+truth_dir = 'data/'
 
-submit_dir = os.path.join(input_dir, 'res')
-truth_dir = os.path.join(input_dir, 'ref')
 
-if not os.path.isdir(submit_dir):
-    print ("%s doesn't exist" % submit_dir)
-
-if os.path.isdir(submit_dir) and os.path.isdir(truth_dir):
+if  os.path.isdir(truth_dir):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    fact_in_train_annotated = gen_train_facts("../../data/ref/train_annotated.json", truth_dir)
-    fact_in_train_distant = gen_train_facts("../../data/ref/train_distant.json", truth_dir)
+    fact_in_train_annotated = gen_train_facts("data/train_annotated.json", truth_dir)
+    fact_in_train_distant = gen_train_facts("data/train_distant.json", truth_dir)
 
     output_filename = os.path.join(output_dir, 'scores.txt')
     output_file = open(output_filename, 'w')
 
-    truth_file = os.path.join(truth_dir, "dev_test.json")
+    truth_file = os.path.join(truth_dir, "dev_two_hop.json")
     truth = json.load(open(truth_file))
 
     std = {}
@@ -62,7 +51,7 @@ if os.path.isdir(submit_dir) and os.path.isdir(truth_dir):
     titleset = set([])
 
     title2vectexSet = {}
-
+    
     for x in truth:
         title = x['title']
         titleset.add(title)
@@ -77,19 +66,20 @@ if os.path.isdir(submit_dir) and os.path.isdir(truth_dir):
             t_idx = label['t']
             std[(title, r, h_idx, t_idx)] = set(label['evidence'])
             tot_evidences += len(label['evidence'])
-
+    truth_titles = set(title2vectexSet.keys())
     tot_relations = len(std)
-
-    submission_answer_file = os.path.join(submit_dir, "result.json")
+    submission_title_set = set()
+    submission_answer_file = sys.argv[1]
     tmp = json.load(open(submission_answer_file))
     tmp.sort(key=lambda x: (x['title'], x['h_idx'], x['t_idx'], x['r']))
     submission_answer = [tmp[0]]
     for i in range(1, len(tmp)):
         x = tmp[i]
         y = tmp[i-1]
+        submission_title_set.add(x['title'])
         if (x['title'], x['h_idx'], x['t_idx'], x['r']) != (y['title'], y['h_idx'], y['t_idx'], y['r']):
             submission_answer.append(tmp[i])
-
+    print(len(submission_title_set.intersection(truth_titles)))
     correct_re = 0
     correct_evidence = 0
     pred_evi = 0
