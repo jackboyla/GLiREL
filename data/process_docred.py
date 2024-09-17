@@ -126,14 +126,20 @@ def expand_labels(doc):
 
 def get_ner_from_entity_mapping(entity_mapping, doc):
     ner = []
+    position2clusterid = []
     cumulative_offset = 0  
-    for _, mention in entity_mapping.items():
+    for k, mention in entity_mapping.items():
         # Find the cumulative offset for the mention (add up the len of all sentences before the mention's sentence)
         cumulative_offset = sum(len(sent) for sent in doc['sents'][:mention['sent_id']])
         # Adjust the entity's position with the cumulative offset
-        ner.append([cumulative_offset + mention['pos'][0], cumulative_offset + mention['pos'][1], mention['type'], mention['name']])
+        start = cumulative_offset + mention['pos'][0]
+        end = cumulative_offset + mention['pos'][1]
+        ner.append([start, end, mention['type'], mention['name']])
+
+        position2clusterid.append([[start, end], k[0]])
+
     ner = sorted(ner, key=lambda x: x[0])
-    return ner
+    return ner, position2clusterid
 
 
 def assert_ner_aligns_with_text(ner, tokenized_text, i):
@@ -158,7 +164,8 @@ for SPLIT in ['train_annotated', 'validation', 'test']: # train_distant
 
         entity_mapping = map_entities(doc)
 
-        example_row['ner'] = get_ner_from_entity_mapping(entity_mapping, doc)  #  "ner": [[3,6,"LOC"], [7,9,"PER"]]
+        example_row['ner'], position2clusterid = get_ner_from_entity_mapping(entity_mapping, doc)  #  "ner": [[3,6,"LOC"], [7,9,"PER"]]
+        example_row['position2clusterid'] = position2clusterid
         # assert_ner_aligns_with_text(example_row['ner'], example_row['tokenized_text'], i)
         example_row['relations'] = expand_labels(doc)
 
@@ -182,6 +189,9 @@ for SPLIT in ['train_annotated', 'validation', 'test']: # train_distant
     print(f"Max number of relations per document: {max([len(rels) for rels in relation_counts])}")
     print(f"Median number of spans per document: {statistics.median([len(spans) for spans in span_counts])}")
     print(f"Max number of spans per document: {max([len(spans) for spans in span_counts])}")
+    # are all title keys unique?
+    assert len(data) == len(set([doc['title'] for doc in data]))
+    print(f"All unique titles")
 
     # save to a jsonl file
     with open(f'docred_{SPLIT}.jsonl', 'w') as f:
