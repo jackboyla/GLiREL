@@ -5,15 +5,19 @@ from glirel import GLiREL
 import torch
 import os
 from evaluation import official_evaluate
+from glirel.modules import utils
 
 """
 https://github.com/tonytan48/Re-DocRED/tree/main/data
 
 python data/re-docred/run_evaluation.py \
-    --ckpt-dir logs/docred/docred-2024-09-16__13-06-14/model_19500 \
+    --ckpt-dir logs/redocred/redocred-2024-09-16__21-11-24/model_43800 \
     --use-gold-coref
 
 """
+
+SUBMISSION_PATH = 'data/re-docred/res/result.json'
+INTERMEDIATE_RESULTS_PATH = 'data/re-docred/res/intermediate_results.json'
 
 with open('data/all_wikidata_properties.json', 'r') as f:
     properties = json.load(f)      
@@ -58,72 +62,95 @@ def run_inference(test_set, model):
     )
     return preds
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--ckpt-dir", type=str, help="Path to the model checkpoint directory")
-    parser.add_argument("--use-gold-coref", action='store_true', help="Use gold coreference clusters")
-    args = parser.parse_args()
+def get_gold_coreference_clusters(test_set):
+    entity_to_cluster_idx_list = []
+    for example in test_set:
+        entity_to_cluster_idx = {}
+        for ent in example['position2clusterid']:
+            entity_to_cluster_idx[(ent[0][0], ent[0][1])] = ent[1]
+        entity_to_cluster_idx_list.append(entity_to_cluster_idx)
+    return entity_to_cluster_idx_list
+        
+
+def run_evaluation(ckpt_dir, use_gold_coref=False, use_auxiliary_coref=False, model=None):
 
     # Load the test set
     test_set = load_test_set()
-    test_set = test_set[:10]
 
     # Load the model
-    model = load_model(args.ckpt_dir)
+    if model is None:
+        model = load_model(ckpt_dir)
+    model.eval()
 
     # Run inference on the test set
     preds = run_inference(test_set, model)
-    print("Inference done!")
+    with open(INTERMEDIATE_RESULTS_PATH, 'w') as f:
+        json.dump(preds, f)
+    print(f"Inference done! Results saved to {INTERMEDIATE_RESULTS_PATH}")
+
+    # get coreference clusters
+    if use_auxiliary_coref: 
+        raise NotImplementedError("Not implemented yet!")
+        # TODO run fast-coref or some other coref model
+    elif use_gold_coref: 
+        entity_to_cluster_idx = get_gold_coreference_clusters(test_set)
+    else:
+        # use predicted coreference clusters
+        print("Using predicted coreference clusters...")
+        clusters, entity_to_cluster_idx = utils.get_coreference_clusters(preds)
+
+    # entity_to_cluster_idx_list --> (128, 129): 0, (33, 34): 0, (144, 145): 0, (0, 6): 0, ...
+
+    # propagate labels using coreference clusters
+    cluster_relations_list = utils.aggregate_cluster_relations(entity_to_cluster_idx, preds)
+    
+    # [ [{'h_idx': 0, 't_idx': 2, 'r': 'performer'}, ...], ...]
 
     submission = []
-    if args.use_gold_coref: 
-        idx = 0
-        for example, pred in zip(test_set, preds):
-            ner_pos2clusterid = {}
-            for i in example['position2clusterid']:
-                ner_pos2clusterid[(i[0][0], i[0][1])] = i[1]
-            for rel in example['relations']:
-                head_pos = rel['head']['position']
-                tail_pos = rel['tail']['position']
-                ner_pos2clusterid[(head_pos[0], head_pos[1])] = rel['head']['h_idx']
-                ner_pos2clusterid[(tail_pos[0], tail_pos[1])] = rel['tail']['t_idx']
-            
-            for rel in pred:
-                instance = {}
-                instance['title'] = example['title']
-                head_pos = rel['head']['position']
-                tail_pos = rel['tail']['position']
-                try:
-                    instance['h_idx'] = ner_pos2clusterid[(head_pos[0], head_pos[1])]
-                except Exception as e:
-                    print(e)
-                    import ipdb; ipdb.set_trace()
-                try:
-                    instance['t_idx'] = ner_pos2clusterid[(tail_pos[0], tail_pos[1])]
-                except Exception as e:
-                    print(e)
-                    import ipdb; ipdb.set_trace()
-                instance['r'] = rel2id.get(rel['relation_text'], 'NA')
-                instance['evidence'] = None
-                submission.append(instance)
-            idx += 1
-    else:
-        raise NotImplementedError("Not implemented yet!")
+    for example, cluster_relations in zip(test_set, cluster_relations_list):
+        for rel in cluster_relations:
+            instance = {}
+            instance['title'] = example['title']
+            instance['h_idx'] = rel['h_idx']
+            instance['t_idx'] = rel['t_idx']
+            instance['r'] = rel2id.get(rel['r'], 'NA')
+            instance['evidence'] = None
+            submission.append(instance)
+
+
+    '''
+    submission: [
+    {"title": "Loud Tour", "h_idx": 0, "t_idx": 2, "r": "P175", "evidence": null}, 
+    {"title": "Loud Tour", "h_idx": 0, "t_idx": 2, "r": "P175", "evidence": null}, 
+    {"title": "Loud Tour", "h_idx": 0, "t_idx": 2, "r": "P175", "evidence": null},
+    ... 
+    '''
         
 
     # save submission file
     if not os.path.exists('data/re-docred/res'):
         os.makedirs('data/re-docred/res')
-    save_path = 'data/re-docred/res/result.json'
-    with open(save_path, 'w') as f:
+    with open(SUBMISSION_PATH, 'w') as f:
         json.dump(submission, f)
-    print(f"Submission file saved to {save_path}!")
+    print(f"Submission file saved to {SUBMISSION_PATH}!")
+
+    with open(SUBMISSION_PATH, 'r') as f:
+        submission = json.load(f)
 
     # run docred eval script
     best_f1, _, best_f1_ign, _, best_p, best_r = official_evaluate(
         tmp=submission, 
         path='data/re-docred', 
         train_file='data/train_revised.json', 
-        dev_file='data/train_revised.json', 
+        dev_file='data/test_revised.json', 
     )
     print(f"Scores: F1: {best_f1}, F1 Ignore: {best_f1_ign} Precision: {best_p}, Recall: {best_r}")
+    return best_f1, best_f1_ign, best_p, best_r
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--ckpt-dir", type=str, help="Path to the model checkpoint directory")
+    parser.add_argument("--use-gold-coref", action='store_true', help="Use gold coreference clusters")
+    parser.add_argument("--use-auxiliary-coref", action='store_true', help="Use auxiliary coreference clusters")
+    args = parser.parse_args()
+    run_evaluation(ckpt_dir=args.ckpt_dir, use_gold_coref=args.use_gold_coref, use_auxiliary_coref=args.use_auxiliary_coref)
