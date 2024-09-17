@@ -2,6 +2,7 @@ from collections import defaultdict
 
 import numpy as np
 import os
+import json
 import torch
 from seqeval.metrics.v1 import _prf_divide
 
@@ -15,10 +16,10 @@ def extract_tp_actual_correct(y_true, y_pred):
     for type_name, head, tail, idx in y_true:
         relations_true[type_name].add((head, tail, idx))
     for type_name, head, tail, idx in y_pred:
-        # we are only interested in the evaluating against 
-        # annotated relations that are present in the true data
-        if any((head, tail, idx) in relations_true[t] for t in relations_true.keys()):
-            relations_pred[type_name].add((head, tail, idx))
+        # # we are only interested in the evaluating against 
+        # # annotated relations that are present in the true data
+        # if any((head, tail, idx) in relations_true[t] for t in relations_true.keys()):
+        relations_pred[type_name].add((head, tail, idx))
 
     target_names = sorted(set(relations_true.keys()) | set(relations_pred.keys()))
 
@@ -128,6 +129,24 @@ class RelEvaluator:
             all_true_rel.append(e)
             e = self.get_relations_fr(j)
             all_outs_rel.append(e)
+        
+        # # DEBUG: find all the relations we missed or got wrong
+        # for i, (true, pred) in enumerate(zip(all_true_rel, all_outs_rel)):
+        #     instance_all_true_set = set([tuple(t) for t in true])
+        #     instance_out_set = set([tuple(t) for t in pred])
+        #     assert len(instance_all_true_set) == len(true), f"Duplicate relations in true data for instance {i}"
+        #     assert len(instance_out_set) == len(pred), f"Duplicate relations in predicted data for instance {i}"
+        #     fn, tp, fp = [], [], []
+        #     for p in instance_out_set:
+        #         if p in instance_all_true_set:
+        #             tp.append(p)
+        #         else:
+        #             fp.append(p)
+        #     for t in instance_all_true_set:
+        #         if t not in instance_out_set:
+        #             fn.append(t)
+        #     import ipdb; ipdb.set_trace()
+                
         return all_true_rel, all_outs_rel
 
     @torch.no_grad()
