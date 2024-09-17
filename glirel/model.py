@@ -278,8 +278,9 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         labels = x['rel_label'].view(-1)     # [B * num_entity_pairs]
 
         # mask for coreference and relation labels
-        coref_mask = (labels == -2)                 # Assuming -2 indicates coreference labels
-        rel_mask = (labels != -2) & (labels != -1)  # Exclude coreference and padding labels
+        coref_mask = (labels <= -50) 
+        labels[coref_mask] = (labels[coref_mask] // -50).long()                
+        rel_mask = (labels != -1)   # Exclude padding (and coreference) labels
 
         # separate labels for relation classification
         rel_labels = labels.masked_fill(~rel_mask, 0)  # Set non-relation labels to 0
@@ -474,49 +475,52 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         device = next(self.parameters()).device
         all_preds = []
         all_trues = []
-        for i, x in enumerate(data_loader):
-            for k, v in x.items():
-                if isinstance(v, torch.Tensor):
-                    x[k] = v.to(device)
-            if i == 0:
-                classes = list(x['classes_to_id'][0].keys())
-                logger.info(f"## Evaluation x['classes_to_id'][0] (showing {min(15, len(classes))}/{len(classes)}) --> {classes[:min(15, len(classes))]}")
-            ner = x['entities']
+        with tqdm(total=len(data_loader), desc="Evaluating") as pbar:
+            for i, x in enumerate(data_loader):
+                for k, v in x.items():
+                    if isinstance(v, torch.Tensor):
+                        x[k] = v.to(device)
+                if i == 0:
+                    classes = list(x['classes_to_id'][0].keys())
+                    logger.info(f"## Evaluation x['classes_to_id'][0] (showing {min(15, len(classes))}/{len(classes)}) --> {classes[:min(15, len(classes))]}")
+                ner = x['entities']
 
 
-            batch_predictions = self.predict(x, flat_ner, threshold, ner)
+                batch_predictions = self.predict(x, flat_ner, threshold, ner)
 
-            all_trues.extend(x["relations"])
-            # format relation predictions for metrics calculation
-            batch_predictions_formatted = []
-            for i, output in enumerate(batch_predictions):
+                all_trues.extend(x["relations"])
+                # format relation predictions for metrics calculation
+                batch_predictions_formatted = []
+                for i, output in enumerate(batch_predictions):
 
-                # sort output by score
-                output = sorted(output, key=lambda x: x[2], reverse=True)
+                    # sort output by score
+                    output = sorted(output, key=lambda x: x[2], reverse=True)
 
-                rels = []
-                position_set = {}  # track all position predictions to take top_k predictions
-                for (head_pos, tail_pos), pred_label, score in output:
+                    rels = []
+                    position_set = {}  # track all position predictions to take top_k predictions
+                    for (head_pos, tail_pos), pred_label, score in output:
 
-                    hashable_positions = (tuple(head_pos), tuple(tail_pos))
-                    if hashable_positions not in position_set:
-                        position_set[hashable_positions] = 0
+                        hashable_positions = (tuple(head_pos), tuple(tail_pos))
+                        if hashable_positions not in position_set:
+                            position_set[hashable_positions] = 0
 
-                    if position_set[hashable_positions] < top_k:
+                        if position_set[hashable_positions] < top_k:
 
-                        rel = {
-                            'head' : {'position': head_pos},
-                            'tail' : {'position': tail_pos},
-                            'relation_text': pred_label,
-                            'score': score,
-                        }
-                        
-                        rels.append(rel)
-                        position_set[hashable_positions] += 1
+                            rel = {
+                                'head' : {'position': head_pos},
+                                'tail' : {'position': tail_pos},
+                                'relation_text': pred_label,
+                                'score': score,
+                            }
+                            
+                            rels.append(rel)
+                            position_set[hashable_positions] += 1
 
-                batch_predictions_formatted.append(rels)
+                    batch_predictions_formatted.append(rels)
 
-            all_preds.extend(batch_predictions_formatted)
+                all_preds.extend(batch_predictions_formatted)
+                
+                pbar.update(1)
                 
 
         evaluator = RelEvaluator(all_trues, all_preds)
