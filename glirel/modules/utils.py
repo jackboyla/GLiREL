@@ -19,6 +19,132 @@ def constrain_relations_by_entity_type(ents, labels, relations):
     return constrained_relations
 
 
+def get_coreference_clusters(relations_list_of_lists):
+    """
+    Generates coreference clusters from relations based on "SELF" relationships.
+
+    Parameters:
+    - relations: List of List of relation dictionaries.
+
+    Returns:
+    - sorted_clusters: List of List of clusters, each cluster is a list of entity positions.
+    - entity_to_cluster_idx: List of Dictionary mapping entity positions to cluster indices.
+    """
+    # Function to convert entity positions to tuples
+    def get_entity_position(entity):
+        return tuple(entity["position"])
+
+    sorted_clusters_list, entity_to_cluster_idx_list = [], []
+    for relations in relations_list_of_lists:
+        # Collect all unique entities
+        entities = set()
+        for relation in relations:
+            head_pos = get_entity_position(relation["head"])
+            tail_pos = get_entity_position(relation["tail"])
+            entities.add(head_pos)
+            entities.add(tail_pos)
+
+        # Initialize Union-Find structure
+        parent = {entity: entity for entity in entities}
+
+        def find(u):
+            # Path compression
+            if parent[u] != u:
+                parent[u] = find(parent[u])
+            return parent[u]
+
+        def union(u, v):
+            pu, pv = find(u), find(v)
+            if pu != pv:
+                parent[pu] = pv
+
+        # Union entities connected by "SELF" relationships
+        for relation in relations:
+            if relation["relation_text"] == "SELF":
+                head_pos = get_entity_position(relation["head"])
+                tail_pos = get_entity_position(relation["tail"])
+                union(head_pos, tail_pos)
+
+        # Build clusters based on connected components
+        clusters = {}
+        for entity in entities:
+            root = find(entity)
+            clusters.setdefault(root, []).append(entity)
+
+        # Sort clusters by the earliest mention position
+        sorted_clusters = sorted(
+            clusters.values(),
+            key=lambda cluster: min(pos[0] for pos in cluster)
+        )
+
+        # Create a mapping from entity positions to cluster indices
+        entity_to_cluster_idx = {}
+        for idx, cluster_entities in enumerate(sorted_clusters):
+            for entity in cluster_entities:
+                entity_to_cluster_idx[entity] = idx
+
+        sorted_clusters_list.append(sorted_clusters)
+        entity_to_cluster_idx_list.append(entity_to_cluster_idx)
+
+    return sorted_clusters_list, entity_to_cluster_idx_list 
+
+def aggregate_cluster_relations(entity_to_cluster_idx_list, relations_list, coreference_label="SELF"):
+    """
+    Aggregates relations across clusters based on the given clusters and relations.
+
+    Parameters:
+    - clusters: List of clusters, each cluster is a list of entity positions.
+    - entity_to_cluster_idx: Dictionary mapping entity positions to cluster indices.
+    - relations: Original list of relation dictionaries.
+
+    Returns:
+    - cluster_relations: List of aggregated cluster-to-cluster relations.
+    """
+
+    # Function to convert entity positions to tuples
+    def get_entity_position(entity):
+        return tuple(entity["position"])
+
+    cluster_relations_list = []
+    for entity_to_cluster_idx, relations in zip(entity_to_cluster_idx_list, relations_list):
+        # Initialize a set to avoid duplicates
+        seen_relations = set()
+        cluster_relations = []
+
+        for relation in relations:
+            # Skip "SELF" relations as they are used for coreference clustering
+            if relation["relation_text"] == coreference_label:
+                continue
+
+            head_pos = get_entity_position(relation["head"])
+            tail_pos = get_entity_position(relation["tail"])
+            h_idx = entity_to_cluster_idx[head_pos]
+            t_idx = entity_to_cluster_idx[tail_pos]
+            r_text = relation["relation_text"]
+
+            # Create the aggregated relation
+            aggregated_relation = {
+                "h_idx": h_idx,
+                "t_idx": t_idx,
+                "r": r_text
+            }
+
+            # Include additional fields if available
+            for field in ["title", "evidence"]:
+                if field in relation:
+                    aggregated_relation[field] = relation[field]
+
+            # Avoid duplicate relations
+            relation_key = (h_idx, t_idx, r_text)
+            if relation_key not in seen_relations:
+                seen_relations.add(relation_key)
+                cluster_relations.append(aggregated_relation)
+
+        cluster_relations = sorted(cluster_relations, key=lambda x: (x["h_idx"], x["t_idx"], x["r"]))
+        cluster_relations_list.append(cluster_relations)
+    
+    return cluster_relations_list
+
 # from EnriCo --> https://github.com/urchade/EnriCo/blob/main/modules/utils.py
 
 def down_weight_loss(logits, y, sample_rate=0.1, is_logit=True):
