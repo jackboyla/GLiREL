@@ -3,10 +3,10 @@ lr_encoder: 1e-5
 lr_others: 1e-4
 
 # Training Parameters
-num_steps: 10000
+num_steps: 100000
 warmup_ratio: 0.1
 train_batch_size: 8
-eval_every: 100
+eval_every: 300
 gradient_accumulation: null
 eval_batch_size: 16
 
@@ -28,7 +28,7 @@ loss_func: "binary_cross_entropy_loss"  # "binary_cross_entropy_loss"  # "focal_
 # gamma: 2
 
 # Coreference Resolution
-coref_classifier: true
+coref_classifier: false
 coref_loss_weight: 10.0
 
 # Directory Paths
@@ -47,7 +47,7 @@ num_train_rel_types: 25   # number of relation labels to use in each given mini-
 top_k: 1                  # number of relations predictions to return at evaluation time
 random_drop: false        # randomly drop relation types
 max_len: 512
-eval_threshold: 0.1
+eval_threshold: 0.0
 max_entity_pair_distance: 50
 # fixed_relation_types: true  # for eval: only use the given list of relation types (FewRel) for all batches
 fixed_relation_types: false   # for eval: use all relation types of a given batch (DocRED)

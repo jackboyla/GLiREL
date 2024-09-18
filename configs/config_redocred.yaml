@@ -3,7 +3,7 @@ lr_encoder: 1e-5
 lr_others: 1e-4
 
 # Training Parameters
-num_steps: 5000
+num_steps: 50000
 warmup_ratio: 0.2
 train_batch_size: 8
 eval_every: 300
@@ -18,8 +18,8 @@ subtoken_pooling: first
 hidden_size: 768
 scorer: "dot"
 span_mode: marker
-refine_prompt: false
-refine_relation: false
+refine_prompt: true
+refine_relation: true
 ffn_mul: 4
 dropout: 0.4
 scheduler: "cosine_with_warmup"  # "cosine_with_hard_restarts"
@@ -45,7 +45,7 @@ prev_path: "none"
 size_sup: -1
 num_train_rel_types: 25   # number of relation labels to use in each given mini-batch
 top_k: 1                  # number of relations predictions to return at evaluation time
-random_drop: false        # randomly drop relation types
+random_drop: true        # randomly drop relation types
 max_len: 512
 eval_threshold: 0.001
 max_entity_pair_distance: 50
