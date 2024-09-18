@@ -580,6 +580,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         state_dict = torch.load(model_file, map_location=torch.device(map_location))
         model.load_state_dict(state_dict, strict=strict, assign=True)
         model.to(map_location)
+        model.device = map_location
         return model
 
     def save_pretrained(
