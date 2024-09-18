@@ -19,6 +19,9 @@ from functools import partial
 from sklearn.model_selection import train_test_split
 import time
 import gc
+import sys
+sys.path.append('data/re-docred')
+from run_evaluation import run_evaluation
 
 
 logger = logging.getLogger(__name__)
@@ -336,6 +339,13 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
             elif eval_data is not None:
                 with torch.no_grad():
 
+                    # TESTING
+                    logger.info("Running testing...")
+                    test_best_f1, test_best_f1_ign, test_best_p, test_best_r = run_evaluation(
+                        ckpt_dir=None, use_gold_coref=True, 
+                        use_auxiliary_coref=False, model=model)
+                    logger.info(f"Test F1: {test_best_f1} | Test F1 Ignore: {test_best_f1_ign} | Test P: {test_best_p} | Test R: {test_best_r}")
+
                     logger.info('Evaluating...')
                     logger.info(f'Taking top k = {top_k} predictions for each relation...')
 
@@ -347,6 +357,7 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
                         relation_types=eval_rel_types if config.fixed_relation_types else [],
                         top_k=top_k
                     )
+
 
                     if wandb_sweep:
                         wandb.log(
@@ -486,8 +497,8 @@ def main(args):
         eval_data = eval_data
         train_data = data
 
-    # train_data = train_data[:10]
-    # eval_data = train_data[:10]
+    # train_data = train_data[:3]
+    # eval_data = train_data[:3]
 
     train_rel_types = get_unique_relations(train_data)
     eval_rel_types = get_unique_relations(eval_data) if eval_data is not None else None
