@@ -18,8 +18,10 @@ def constrain_relations_by_entity_type(ents, labels, relations):
     
     return constrained_relations
 
-
-def get_coreference_clusters(relations_list_of_lists):
+def get_entity_position(entity):
+    return tuple(entity["position"])
+    
+def get_coreference_clusters(relations_list_of_lists, coreference_label="SELF"):
     """
     Generates coreference clusters from relations based on "SELF" relationships.
 
@@ -30,17 +32,16 @@ def get_coreference_clusters(relations_list_of_lists):
     - sorted_clusters: List of List of clusters, each cluster is a list of entity positions.
     - entity_to_cluster_idx: List of Dictionary mapping entity positions to cluster indices.
     """
-    # Function to convert entity positions to tuples
-    def get_entity_position(entity):
-        return tuple(entity["position"])
+    if isinstance(relations_list_of_lists[0], dict):
+        relations_list_of_lists = [relations_list_of_lists]
 
     sorted_clusters_list, entity_to_cluster_idx_list = [], []
     for relations in relations_list_of_lists:
         # Collect all unique entities
         entities = set()
         for relation in relations:
-            head_pos = get_entity_position(relation["head"])
-            tail_pos = get_entity_position(relation["tail"])
+            head_pos = get_entity_position(relation["head"]) if "head" in relation else tuple(relation["head_pos"])
+            tail_pos = get_entity_position(relation["tail"]) if "tail" in relation else tuple(relation["tail_pos"])
             entities.add(head_pos)
             entities.add(tail_pos)
 
@@ -60,9 +61,10 @@ def get_coreference_clusters(relations_list_of_lists):
 
         # Union entities connected by "SELF" relationships
         for relation in relations:
-            if relation["relation_text"] == "SELF":
-                head_pos = get_entity_position(relation["head"])
-                tail_pos = get_entity_position(relation["tail"])
+            relation_is_coreference = (relation["relation_text"] == coreference_label) if "relation_text" in relation else (relation['label'] == coreference_label)
+            if relation_is_coreference:
+                head_pos = get_entity_position(relation["head"]) if "head" in relation else tuple(relation["head_pos"])
+                tail_pos = get_entity_position(relation["tail"]) if "tail" in relation else tuple(relation["tail_pos"])
                 union(head_pos, tail_pos)
 
         # Build clusters based on connected components
@@ -100,10 +102,10 @@ def aggregate_cluster_relations(entity_to_cluster_idx_list, relations_list, core
     Returns:
     - cluster_relations: List of aggregated cluster-to-cluster relations.
     """
-
-    # Function to convert entity positions to tuples
-    def get_entity_position(entity):
-        return tuple(entity["position"])
+    if isinstance(relations_list[0], dict):
+        relations_list = [relations_list]
+    if isinstance(entity_to_cluster_idx_list, dict):
+        entity_to_cluster_idx_list = [entity_to_cluster_idx_list]
 
     cluster_relations_list = []
     for entity_to_cluster_idx, relations in zip(entity_to_cluster_idx_list, relations_list):
@@ -113,14 +115,22 @@ def aggregate_cluster_relations(entity_to_cluster_idx_list, relations_list, core
 
         for relation in relations:
             # Skip "SELF" relations as they are used for coreference clustering
-            if relation["relation_text"] == coreference_label:
+            relation_is_coreference = (relation["relation_text"] == coreference_label) if "relation_text" in relation else (relation['label'] == coreference_label)
+            if relation_is_coreference:
                 continue
 
-            head_pos = get_entity_position(relation["head"])
-            tail_pos = get_entity_position(relation["tail"])
-            h_idx = entity_to_cluster_idx[head_pos]
-            t_idx = entity_to_cluster_idx[tail_pos]
-            r_text = relation["relation_text"]
+            head_pos = get_entity_position(relation["head"]) if "head" in relation else tuple(relation["head_pos"])
+            tail_pos = get_entity_position(relation["tail"]) if "tail" in relation else tuple(relation["tail_pos"])
+            try:
+                h_idx = entity_to_cluster_idx[head_pos]
+                t_idx = entity_to_cluster_idx[tail_pos]
+            except:
+                print("relation", relation)
+                print("head_pos", head_pos)
+                print("tail_pos", tail_pos)
+                print("entity_to_cluster_idx", entity_to_cluster_idx)
+                raise
+            r_text = relation["relation_text"] if "relation_text" in relation else relation['label']
 
             # Create the aggregated relation
             aggregated_relation = {
