@@ -174,3 +174,4 @@ pyrightconfig.json
 
 logs
 wandb
+train_distant.json
