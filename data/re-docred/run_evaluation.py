@@ -64,12 +64,19 @@ def run_inference(test_set, model):
 
 def get_gold_coreference_clusters(test_set):
     entity_to_cluster_idx_list = []
+    clusters_list = []
     for example in test_set:
         entity_to_cluster_idx = {}
+        clusters = {}
         for ent in example['position2clusterid']:
-            entity_to_cluster_idx[(ent[0][0], ent[0][1])] = ent[1]
+            position = (ent[0][0], ent[0][1])
+            cluster_id = ent[1]
+            entity_to_cluster_idx[position] = cluster_id
+            clusters.setdefault(cluster_id, []).append(position)
         entity_to_cluster_idx_list.append(entity_to_cluster_idx)
-    return entity_to_cluster_idx_list
+        clusters_list.append(list(clusters.values()))
+    return clusters_list, entity_to_cluster_idx_list
+
         
 
 def run_evaluation(ckpt_dir, use_gold_coref=False, use_auxiliary_coref=False, model=None):
@@ -93,11 +100,11 @@ def run_evaluation(ckpt_dir, use_gold_coref=False, use_auxiliary_coref=False, mo
         raise NotImplementedError("Not implemented yet!")
         # TODO run fast-coref or some other coref model
     elif use_gold_coref: 
-        entity_to_cluster_idx = get_gold_coreference_clusters(test_set)
+        clusters_batch, entity_to_cluster_idx = get_gold_coreference_clusters(test_set)
     else:
         # use predicted coreference clusters
         print("Using predicted coreference clusters...")
-        clusters, entity_to_cluster_idx = utils.get_coreference_clusters(preds)
+        clusters_batch, entity_to_cluster_idx = utils.get_coreference_clusters(preds)
 
     # entity_to_cluster_idx_list --> (128, 129): 0, (33, 34): 0, (144, 145): 0, (0, 6): 0, ...
 
@@ -138,13 +145,28 @@ def run_evaluation(ckpt_dir, use_gold_coref=False, use_auxiliary_coref=False, mo
         submission = json.load(f)
 
     # run docred eval script
-    best_f1, _, best_f1_ign, _, best_p, best_r = official_evaluate(
+    best_f1, _, best_f1_ign, _, best_p, best_r, debug_results = official_evaluate(   # official_evaluate_benchmark
         tmp=submission, 
         path='data/re-docred', 
         train_file='data/train_revised.json', 
         dev_file='data/test_revised.json', 
     )
     print(f"Scores: F1: {best_f1}, F1 Ignore: {best_f1_ign} Precision: {best_p}, Recall: {best_r}")
+
+    # print some debug info
+    batch_tokenized_text = [example['tokenized_text'] for example in test_set]
+    debug_results_incorrect_titles = [s['title'] for s in debug_results['incorrect']]
+    for cluster, cluster_relations, tokenized_text, sub in zip(clusters_batch, cluster_relations_list, batch_tokenized_text, submission):
+        if sub['title'] in debug_results_incorrect_titles:
+            for cluster_relations in cluster_relations_list:
+                print()
+                cluster_h_idx = cluster_relations['h_idx']
+                cluster_t_idx = cluster_relations['t_idx']
+                head_cluster = [tokenized_text[s:e] for s, e in cluster[cluster_h_idx]]
+                print(f"Head Cluster: {head_cluster}")
+                print(f"Relation: {cluster_relations['r']}")
+                tail_cluster = [tokenized_text[s:e] for s, e in cluster[cluster_t_idx]]
+                print(f"Tail Cluster: {tail_cluster}")
     return best_f1, best_f1_ign, best_p, best_r
 
 if __name__ == '__main__':

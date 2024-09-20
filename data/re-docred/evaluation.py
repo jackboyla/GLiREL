@@ -192,6 +192,7 @@ def official_evaluate(tmp, path, train_file, dev_file):
     correct_in_train_annotated = 0
     correct_in_train_distant = 0
     titleset2 = set([])
+    debug_results = {'correct': [], 'incorrect': []}
     for x in submission_answer:
         title = x['title']
         h_idx = x['h_idx']
@@ -224,6 +225,9 @@ def official_evaluate(tmp, path, train_file, dev_file):
                 correct_in_train_annotated += 1
             if in_train_distant:
                 correct_in_train_distant += 1
+            debug_results['correct'].append(x)
+        else:
+            debug_results['incorrect'].append(x)
 
     re_p = 1.0 * correct_re / len(submission_answer)
     re_r = 1.0 * correct_re / tot_relations
@@ -252,7 +256,7 @@ def official_evaluate(tmp, path, train_file, dev_file):
     else:
         re_f1_ignore_train = 2.0 * re_p_ignore_train * re_r / (re_p_ignore_train + re_r)
 
-    return re_f1, evi_f1, re_f1_ignore_train_annotated, re_f1_ignore_train , re_p, re_r
+    return re_f1, evi_f1, re_f1_ignore_train_annotated, re_f1_ignore_train , re_p, re_r, debug_results
 
 
 
