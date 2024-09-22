@@ -83,6 +83,18 @@ def run_evaluation(ckpt_dir, use_gold_coref=False, use_auxiliary_coref=False, mo
 
     # Load the test set
     test_set = load_test_set()
+    # test_set = test_set[:10]
+
+    head_tail2rel_list = []
+    title2head_tail2rel = {}
+    title2tokenized_text = {}
+    for example in test_set:
+        title2tokenized_text[example['title']] = example['tokenized_text']
+        head_tail2rel = {}
+        for rel in example['relations']:
+            head_tail2rel[(rel['head']['h_idx'], rel['tail']['t_idx'])] = rel['relation_text']
+        head_tail2rel_list.append(head_tail2rel)
+        title2head_tail2rel[example['title']] = head_tail2rel
 
     # Load the model
     if model is None:
@@ -90,6 +102,8 @@ def run_evaluation(ckpt_dir, use_gold_coref=False, use_auxiliary_coref=False, mo
     model.eval()
 
     # Run inference on the test set
+    if not os.path.exists('data/re-docred/res'):
+        os.makedirs('data/re-docred/res')
     preds = run_inference(test_set, model)
     with open(INTERMEDIATE_RESULTS_PATH, 'w') as f:
         json.dump(preds, f)
@@ -105,6 +119,8 @@ def run_evaluation(ckpt_dir, use_gold_coref=False, use_auxiliary_coref=False, mo
         # use predicted coreference clusters
         print("Using predicted coreference clusters...")
         clusters_batch, entity_to_cluster_idx = utils.get_coreference_clusters(preds)
+
+    title2clusters = {example['title']: clusters for example, clusters in zip(test_set, clusters_batch)}
 
     # entity_to_cluster_idx_list --> (128, 129): 0, (33, 34): 0, (144, 145): 0, (0, 6): 0, ...
 
@@ -133,10 +149,7 @@ def run_evaluation(ckpt_dir, use_gold_coref=False, use_auxiliary_coref=False, mo
     ... 
     '''
         
-
     # save submission file
-    if not os.path.exists('data/re-docred/res'):
-        os.makedirs('data/re-docred/res')
     with open(SUBMISSION_PATH, 'w') as f:
         json.dump(submission, f)
     print(f"Submission file saved to {SUBMISSION_PATH}!")
@@ -145,6 +158,7 @@ def run_evaluation(ckpt_dir, use_gold_coref=False, use_auxiliary_coref=False, mo
         submission = json.load(f)
 
     # run docred eval script
+    print("Running evaluation script...")
     best_f1, _, best_f1_ign, _, best_p, best_r, debug_results = official_evaluate(   # official_evaluate_benchmark
         tmp=submission, 
         path='data/re-docred', 
@@ -153,20 +167,43 @@ def run_evaluation(ckpt_dir, use_gold_coref=False, use_auxiliary_coref=False, mo
     )
     print(f"Scores: F1: {best_f1}, F1 Ignore: {best_f1_ign} Precision: {best_p}, Recall: {best_r}")
 
+
     # print some debug info
     batch_tokenized_text = [example['tokenized_text'] for example in test_set]
-    debug_results_incorrect_titles = [s['title'] for s in debug_results['incorrect']]
-    for cluster, cluster_relations, tokenized_text, sub in zip(clusters_batch, cluster_relations_list, batch_tokenized_text, submission):
-        if sub['title'] in debug_results_incorrect_titles:
-            for cluster_relations in cluster_relations_list:
-                print()
-                cluster_h_idx = cluster_relations['h_idx']
-                cluster_t_idx = cluster_relations['t_idx']
-                head_cluster = [tokenized_text[s:e] for s, e in cluster[cluster_h_idx]]
-                print(f"Head Cluster: {head_cluster}")
-                print(f"Relation: {cluster_relations['r']}")
-                tail_cluster = [tokenized_text[s:e] for s, e in cluster[cluster_t_idx]]
-                print(f"Tail Cluster: {tail_cluster}")
+    debug_results_incorrect_titles = [(sub['title'], sub['h_idx'], sub['t_idx']) for sub in debug_results['incorrect']]
+    for i, (cluster, tokenized_text, sub, true_rels) in enumerate(zip(clusters_batch, batch_tokenized_text, submission, head_tail2rel_list)):
+        if (sub['title'], sub['h_idx'], sub['t_idx']) in debug_results_incorrect_titles:
+            print()
+            print(f"#####################\nTitle: {sub['title']}")
+            print(f"true rels --> {true_rels}")
+
+            head_cluster = [tokenized_text[s:e] for s, e in cluster[sub['h_idx']]]
+            print(f"Head Cluster: {head_cluster}")
+            pred_relation = id2rel.get(sub['r'], 'NA')
+            actual_relation = id2rel.get(true_rels.get((sub['h_idx'], sub['t_idx']), 'NA'), 'NA')
+            print(f"Pred Relation: {pred_relation} --should be--> {actual_relation}")
+            tail_cluster = [tokenized_text[s:e] for s, e in cluster[sub['t_idx']]]
+            print(f"Tail Cluster: {tail_cluster}")
+
+    # Handle missed relations and print their details
+    warned = set()
+    for (title, r, h_idx, t_idx) in debug_results['missed']:
+        if title in title2tokenized_text:
+            print(f"#####################\nMissed Relation in: {title}")
+            # actual_relation = id2rel.get(title2head_tail2rel[title].get((h_idx, t_idx), 'NA'), 'NA')
+            actual_relation = r
+            
+            head_cluster = [title2tokenized_text[title][s:e] for s, e in title2clusters[title][h_idx]]
+            tail_cluster = [title2tokenized_text[title][s:e] for s, e in title2clusters[title][t_idx]]
+            
+            print(f"Head Cluster: {head_cluster}")
+            print(f"Tail Cluster: {tail_cluster}")
+            print(f"MISSED--> Actual Relation: {id2rel.get(actual_relation)}")
+        else:
+            if title not in warned: 
+                print(f"Title not found: {title}")
+                warned.add(title)
+
     return best_f1, best_f1_ign, best_p, best_r
 
 if __name__ == '__main__':

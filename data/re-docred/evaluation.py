@@ -192,7 +192,8 @@ def official_evaluate(tmp, path, train_file, dev_file):
     correct_in_train_annotated = 0
     correct_in_train_distant = 0
     titleset2 = set([])
-    debug_results = {'correct': [], 'incorrect': []}
+    debug_results = {'correct': [], 'incorrect': [], 'missed': []}
+    all_preds = []
     for x in submission_answer:
         title = x['title']
         h_idx = x['h_idx']
@@ -208,6 +209,8 @@ def official_evaluate(tmp, path, train_file, dev_file):
         else:
             evi = set([])
         pred_evi += len(evi)
+
+        all_preds.append((title, r, h_idx, t_idx))
 
         if (title, r, h_idx, t_idx) in std:
             correct_re += 1
@@ -228,6 +231,10 @@ def official_evaluate(tmp, path, train_file, dev_file):
             debug_results['correct'].append(x)
         else:
             debug_results['incorrect'].append(x)
+    
+    for true in std.keys():
+        if true not in all_preds:
+            debug_results['missed'].append(true)
 
     re_p = 1.0 * correct_re / len(submission_answer)
     re_r = 1.0 * correct_re / tot_relations
