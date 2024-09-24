@@ -470,7 +470,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         return all_relations
 
 
-    def evaluate(self, test_data, flat_ner=False, threshold=0.5, batch_size=12, relation_types=None, top_k=1, return_preds=False):
+    def evaluate(self, test_data, flat_ner=False, threshold=0.5, batch_size=12, relation_types=None, top_k=1, return_preds=False, dataset_name: str = None):
         self.eval()
         logger.info(f"Number of classes to evaluate with --> {len(relation_types)}")
         data_loader = self.create_dataloader(test_data, batch_size=batch_size, relation_types=relation_types, shuffle=False)
@@ -524,7 +524,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
                 pbar.update(1)
                 
 
-        evaluator = RelEvaluator(all_trues, all_preds)
+        evaluator = RelEvaluator(all_trues, all_preds, dataset_name=dataset_name)
         out, micro_f1, macro_f1 = evaluator.evaluate()
         
         if return_preds:

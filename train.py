@@ -357,7 +357,8 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
                         threshold=config.eval_threshold, 
                         batch_size=config.eval_batch_size,
                         relation_types=eval_rel_types if config.fixed_relation_types else [],
-                        top_k=top_k
+                        top_k=top_k,
+                        dataset_name=config.dataset_name,
                     )
 
 

@@ -7,107 +7,11 @@ import torch
 from seqeval.metrics.v1 import _prf_divide
 
 
-def extract_tp_actual_correct(y_true, y_pred):
-    # y_pred[0] -> ['work location', (19, 20), (23, 24), 0]
-    relations_true = defaultdict(set)
-    relations_pred = defaultdict(set)
-
-
-    for type_name, head, tail, idx in y_true:
-        relations_true[type_name].add((head, tail, idx))
-    for type_name, head, tail, idx in y_pred:
-        # # we are only interested in the evaluating against 
-        # # annotated relations that are present in the true data
-        # if any((head, tail, idx) in relations_true[t] for t in relations_true.keys()):
-        relations_pred[type_name].add((head, tail, idx))
-
-    target_names = sorted(set(relations_true.keys()) | set(relations_pred.keys()))
-
-    tp_sum = np.array([], dtype=np.int32)
-    pred_sum = np.array([], dtype=np.int32)
-    true_sum = np.array([], dtype=np.int32)
-    for type_name in target_names:
-        relations_true_type = relations_true.get(type_name, set())
-        relations_pred_type = relations_pred.get(type_name, set())
-        tp_sum = np.append(tp_sum, len(relations_true_type & relations_pred_type))
-        pred_sum = np.append(pred_sum, len(relations_pred_type))
-        true_sum = np.append(true_sum, len(relations_true_type))
-
-    return pred_sum, tp_sum, true_sum, target_names
-
-
-def flatten_for_eval(y_true, y_pred):
-    all_true = []
-    all_pred = []
-
-    for i, (true, pred) in enumerate(zip(y_true, y_pred)):
-        all_true.extend([t + [i] for t in true])
-        all_pred.extend([p + [i] for p in pred])
-
-    return all_true, all_pred
-
-
-def compute_prf(y_true, y_pred):
-    # macro will weight all classes equally, micro will weight all instances equally (regardless of class)
-    # ref (because I always forget) -> https://datascience.stackexchange.com/a/24051
-    y_true, y_pred = flatten_for_eval(y_true, y_pred)
-
-    pred_sum, tp_sum, true_sum, target_names = extract_tp_actual_correct(y_true, y_pred)
-
-        
-    # Macro averaging calculates the metrics for each class separately and then average them
-    macro_f_score, macro_recall, macro_precision = [], [], []
-    for i in range(len(tp_sum)):
-        p = _prf_divide(numerator=np.array([tp_sum[i]]), denominator=np.array([pred_sum[i]]), metric='precision', modifier='predicted', average='macro', warn_for=('precision',), zero_division='warn')
-        r = _prf_divide(numerator=np.array([tp_sum[i]]), denominator=np.array([true_sum[i]]), metric='recall', modifier='true', average='macro', warn_for=('recall',), zero_division='warn')
-        f = 2 * (p * r) / (p + r) if p + r != 0 else np.array([0])
-        macro_precision.append(p)
-        macro_recall.append(r)
-        macro_f_score.append(f)
-    macro_precision = [np.mean(macro_precision)]
-    macro_recall = [np.mean(macro_recall)]
-    macro_f_score = [np.mean(macro_f_score)]
-
-
-    # Micro averaging is simply the total number of true positives, false positives, and false negatives
-    tp_sum = np.array([tp_sum.sum()])
-    pred_sum = np.array([pred_sum.sum()])
-    true_sum = np.array([true_sum.sum()])
-
-    micro_precision = _prf_divide(
-        numerator=tp_sum,
-        denominator=pred_sum,
-        metric='precision',
-        modifier='predicted',
-        average='micro',
-        warn_for=('precision', 'recall', 'f-score'),
-        zero_division='warn'
-    )
-
-    micro_recall = _prf_divide(
-        numerator=tp_sum,
-        denominator=true_sum,
-        metric='recall',
-        modifier='true',
-        average='micro',
-        warn_for=('precision', 'recall', 'f-score'),
-        zero_division='warn'
-    )
-
-    denominator = micro_precision + micro_recall
-    denominator[denominator == 0.] = 1
-    micro_f_score = 2 * (micro_precision * micro_recall) / denominator
-
-
-    return {'micro_precision': micro_precision[0], 'micro_recall': micro_recall[0], 'micro_f_score': micro_f_score[0],
-            'macro_precision': macro_precision[0], 'macro_recall': macro_recall[0], 'macro_f_score': macro_f_score[0],
-            }
-
-
 class RelEvaluator:
-    def __init__(self, all_true, all_outs):
+    def __init__(self, all_true, all_outs, dataset_name: str = None):
         self.all_true = all_true
         self.all_outs = all_outs
+        self.dataset_name = dataset_name
 
     def get_relations_fr(self, rels):
         all_rels = []
@@ -152,10 +56,109 @@ class RelEvaluator:
     @torch.no_grad()
     def evaluate(self):
         all_true_typed, all_outs_typed = self.transform_data()
-        micro_precision, micro_recall, micro_f1, macro_precision, macro_recall, macro_f1 = compute_prf(all_true_typed, all_outs_typed).values()
+        micro_precision, micro_recall, micro_f1, macro_precision, macro_recall, macro_f1 = self.compute_prf(all_true_typed, all_outs_typed).values()
         output_str = f"Micro P: {micro_precision:.2%}\tMicro R: {micro_recall:.2%}\tMicro F1: {micro_f1:.2%}\n"
         output_str += f"Macro P: {macro_precision:.2%}\tMacro R: {macro_recall:.2%}\tMacro F1: {macro_f1:.2%}\n"
         return output_str, micro_f1, macro_f1
+    
+    def extract_tp_actual_correct(self, y_true, y_pred):
+        # y_pred[0] -> ['work location', (19, 20), (23, 24), 0]
+        relations_true = defaultdict(set)
+        relations_pred = defaultdict(set)
+
+        for type_name, head, tail, idx in y_true:
+            relations_true[type_name].add((head, tail, idx))
+        for type_name, head, tail, idx in y_pred:
+            # NOTE: we are only interested in the evaluating against 
+            # annotated relations that are present in the true data (i.e. not the ones that are not annotated in the case of FewRel)
+            if self.dataset_name == "few_rel":
+                if any((head, tail, idx) in relations_true[t] for t in relations_true.keys()):
+                    relations_pred[type_name].add((head, tail, idx))
+            else:
+                relations_pred[type_name].add((head, tail, idx))
+
+
+        target_names = sorted(set(relations_true.keys()) | set(relations_pred.keys()))
+
+        tp_sum = np.array([], dtype=np.int32)
+        pred_sum = np.array([], dtype=np.int32)
+        true_sum = np.array([], dtype=np.int32)
+        for type_name in target_names:
+            relations_true_type = relations_true.get(type_name, set())
+            relations_pred_type = relations_pred.get(type_name, set())
+            tp_sum = np.append(tp_sum, len(relations_true_type & relations_pred_type))
+            pred_sum = np.append(pred_sum, len(relations_pred_type))
+            true_sum = np.append(true_sum, len(relations_true_type))
+
+        return pred_sum, tp_sum, true_sum, target_names
+
+    def flatten_for_eval(self, y_true, y_pred):
+        all_true = []
+        all_pred = []
+
+        for i, (true, pred) in enumerate(zip(y_true, y_pred)):
+            all_true.extend([t + [i] for t in true])
+            all_pred.extend([p + [i] for p in pred])
+
+        return all_true, all_pred
+
+
+    def compute_prf(self, y_true, y_pred):
+        # macro will weight all classes equally, micro will weight all instances equally (regardless of class)
+        # ref (because I always forget) -> https://datascience.stackexchange.com/a/24051
+        y_true, y_pred = self.flatten_for_eval(y_true, y_pred)
+
+        pred_sum, tp_sum, true_sum, target_names = self.extract_tp_actual_correct(y_true, y_pred)
+
+            
+        # Macro averaging calculates the metrics for each class separately and then average them
+        macro_f_score, macro_recall, macro_precision = [], [], []
+        for i in range(len(tp_sum)):
+            p = _prf_divide(numerator=np.array([tp_sum[i]]), denominator=np.array([pred_sum[i]]), metric='precision', modifier='predicted', average='macro', warn_for=('precision',), zero_division='warn')
+            r = _prf_divide(numerator=np.array([tp_sum[i]]), denominator=np.array([true_sum[i]]), metric='recall', modifier='true', average='macro', warn_for=('recall',), zero_division='warn')
+            f = 2 * (p * r) / (p + r) if p + r != 0 else np.array([0])
+            macro_precision.append(p)
+            macro_recall.append(r)
+            macro_f_score.append(f)
+        macro_precision = [np.mean(macro_precision)]
+        macro_recall = [np.mean(macro_recall)]
+        macro_f_score = [np.mean(macro_f_score)]
+
+
+        # Micro averaging is simply the total number of true positives, false positives, and false negatives
+        tp_sum = np.array([tp_sum.sum()])
+        pred_sum = np.array([pred_sum.sum()])
+        true_sum = np.array([true_sum.sum()])
+
+        micro_precision = _prf_divide(
+            numerator=tp_sum,
+            denominator=pred_sum,
+            metric='precision',
+            modifier='predicted',
+            average='micro',
+            warn_for=('precision', 'recall', 'f-score'),
+            zero_division='warn'
+        )
+
+        micro_recall = _prf_divide(
+            numerator=tp_sum,
+            denominator=true_sum,
+            metric='recall',
+            modifier='true',
+            average='micro',
+            warn_for=('precision', 'recall', 'f-score'),
+            zero_division='warn'
+        )
+
+        denominator = micro_precision + micro_recall
+        denominator[denominator == 0.] = 1
+        micro_f_score = 2 * (micro_precision * micro_recall) / denominator
+
+
+        return {'micro_precision': micro_precision[0], 'micro_recall': micro_recall[0], 'micro_f_score': micro_f_score[0],
+                'macro_precision': macro_precision[0], 'macro_recall': macro_recall[0], 'macro_f_score': macro_f_score[0],
+                }
+
 
 
 def is_nested(idx1, idx2):
