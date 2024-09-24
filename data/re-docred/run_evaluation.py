@@ -4,6 +4,7 @@ import json
 from glirel import GLiREL
 import torch
 import os
+import sys
 from evaluation import official_evaluate
 from glirel.modules import utils
 
@@ -47,6 +48,7 @@ def load_test_set():
 def load_model(checkpoint_dir):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     model = GLiREL.from_pretrained(checkpoint_dir).to(device)
+    model.device = device
     return model
 
 def run_inference(test_set, model):
@@ -80,6 +82,14 @@ def get_gold_coreference_clusters(test_set):
         
 
 def run_evaluation(ckpt_dir, use_gold_coref=False, use_auxiliary_coref=False, model=None):
+
+    log_file = None
+
+    # Check if ckpt_dir exists and redirect print statements to a file if it does
+    if os.path.exists(ckpt_dir):
+        log_file = os.path.join(ckpt_dir, 'evaluation_log.txt')
+        sys.stdout = open(log_file, 'w')
+
 
     # Load the test set
     test_set = load_test_set()
@@ -119,8 +129,6 @@ def run_evaluation(ckpt_dir, use_gold_coref=False, use_auxiliary_coref=False, mo
         # use predicted coreference clusters
         print("Using predicted coreference clusters...")
         clusters_batch, entity_to_cluster_idx = utils.get_coreference_clusters(preds)
-
-    title2clusters = {example['title']: clusters for example, clusters in zip(test_set, clusters_batch)}
 
     # entity_to_cluster_idx_list --> (128, 129): 0, (33, 34): 0, (144, 145): 0, (0, 6): 0, ...
 
@@ -168,41 +176,68 @@ def run_evaluation(ckpt_dir, use_gold_coref=False, use_auxiliary_coref=False, mo
     print(f"Scores: F1: {best_f1}, F1 Ignore: {best_f1_ign} Precision: {best_p}, Recall: {best_r}")
 
 
-    # print some debug info
+    # Create a mapping from title to index
+    title_to_index = {example['title']: idx for idx, example in enumerate(test_set)}
     batch_tokenized_text = [example['tokenized_text'] for example in test_set]
-    debug_results_incorrect_titles = [(sub['title'], sub['h_idx'], sub['t_idx']) for sub in debug_results['incorrect']]
-    for i, (cluster, tokenized_text, sub, true_rels) in enumerate(zip(clusters_batch, batch_tokenized_text, submission, head_tail2rel_list)):
-        if (sub['title'], sub['h_idx'], sub['t_idx']) in debug_results_incorrect_titles:
-            print()
-            print(f"#####################\nTitle: {sub['title']}")
-            print(f"true rels --> {true_rels}")
 
-            head_cluster = [tokenized_text[s:e] for s, e in cluster[sub['h_idx']]]
-            print(f"Head Cluster: {head_cluster}")
-            pred_relation = id2rel.get(sub['r'], 'NA')
-            actual_relation = id2rel.get(true_rels.get((sub['h_idx'], sub['t_idx']), 'NA'), 'NA')
-            print(f"Pred Relation: {pred_relation} --should be--> {actual_relation}")
-            tail_cluster = [tokenized_text[s:e] for s, e in cluster[sub['t_idx']]]
-            print(f"Tail Cluster: {tail_cluster}")
+    # Process false positives
+    print("\nProcessing false positives:")
+    for x in debug_results['false_positives']:
+        title, r, h_idx, t_idx = x['title'], x['r'], x['h_idx'], x['t_idx']
 
-    # Handle missed relations and print their details
-    warned = set()
-    for (title, r, h_idx, t_idx) in debug_results['missed']:
-        if title in title2tokenized_text:
-            print(f"#####################\nMissed Relation in: {title}")
-            # actual_relation = id2rel.get(title2head_tail2rel[title].get((h_idx, t_idx), 'NA'), 'NA')
-            actual_relation = r
-            
-            head_cluster = [title2tokenized_text[title][s:e] for s, e in title2clusters[title][h_idx]]
-            tail_cluster = [title2tokenized_text[title][s:e] for s, e in title2clusters[title][t_idx]]
-            
-            print(f"Head Cluster: {head_cluster}")
-            print(f"Tail Cluster: {tail_cluster}")
-            print(f"MISSED--> Actual Relation: {id2rel.get(actual_relation)}")
+        idx = title_to_index.get(title)
+        if idx is None:
+            print(f"Title not found: {title}")
+            continue
+        clusters = clusters_batch[idx]
+        tokenized_text = batch_tokenized_text[idx]
+        if h_idx >= len(clusters) or t_idx >= len(clusters):
+            print(f"Invalid h_idx or t_idx for title {title}")
+            continue
+        head_cluster_positions = clusters[h_idx]
+        tail_cluster_positions = clusters[t_idx]
+        head_cluster = [' '.join(tokenized_text[s:e]) for s, e in head_cluster_positions]
+        tail_cluster = [' '.join(tokenized_text[s:e]) for s, e in tail_cluster_positions]
+        pred_relation = id2rel.get(r, 'NA')
+        if (title, h_idx, t_idx) in debug_results['actual']: 
+            # there is an actual relation that was misclassified
+            actual_relation = debug_results['actual'][(title, h_idx, t_idx)]
+            actual_relation = id2rel[actual_relation]
         else:
-            if title not in warned: 
-                print(f"Title not found: {title}")
-                warned.add(title)
+            # there's no relation between head and tail
+            actual_relation = 'NA'  
+        print(f"##################### False Positive in: {title}\n")
+        print(f"Predicted Relation: {pred_relation}")
+        print(f"Actual Relation: {actual_relation}")
+        print(f"Head Cluster: {head_cluster}")
+        print(f"Tail Cluster: {tail_cluster}")
+
+    # Process false negatives
+    print("\nProcessing false negatives:")
+    for title, r, h_idx, t_idx in debug_results['false_negatives']:
+
+        idx = title_to_index.get(title)
+        if idx is None:
+            print(f"Title not found: {title}")
+            continue
+        clusters = clusters_batch[idx]
+        tokenized_text = batch_tokenized_text[idx]
+        if h_idx >= len(clusters) or t_idx >= len(clusters):
+            print(f"Invalid h_idx or t_idx for title {title}")
+            continue
+        head_cluster_positions = clusters[h_idx]
+        tail_cluster_positions = clusters[t_idx]
+        head_cluster = [' '.join(tokenized_text[s:e]) for s, e in head_cluster_positions]
+        tail_cluster = [' '.join(tokenized_text[s:e]) for s, e in tail_cluster_positions]
+        actual_relation = id2rel.get(r, 'NA')
+        print(f"##################### False Negative in: {title}\n")
+        print(f"Actual Relation: {actual_relation}")
+        print(f"Head Cluster: {head_cluster}")
+        print(f"Tail Cluster: {tail_cluster}")
+
+    if log_file:
+        sys.stdout.close()
+        sys.stdout = sys.__stdout__
 
     return best_f1, best_f1_ign, best_p, best_r
 
