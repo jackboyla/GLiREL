@@ -338,6 +338,11 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         
         # Get indices where relations are triggered
         batch_indices, pair_indices, rel_type_indices = torch.nonzero(triggered_relations, as_tuple=True)
+
+        # If no relations are triggered, return empty lists
+        if batch_indices.numel() == 0:
+            rels = [[] for _ in range(len(x["tokens"]))]
+            return rels
         
         # Get scores
         scores = probabilities[batch_indices, pair_indices, rel_type_indices]
