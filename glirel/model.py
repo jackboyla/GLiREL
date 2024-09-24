@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import os
 from typing import Dict, Optional, Union
+import numpy as np
 import torch
 import torch.nn.functional as F
 import yaml
@@ -327,59 +328,60 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         return {'total_loss': total_loss} # total_loss is rel_loss if no coref_classifier
 
 
-    def aggregate_relations_using_coreference(self, relations):
-        """
-        
-        """
-        ...
-
     @torch.no_grad()
     def predict(self, x, flat_ner=False, threshold=0.5, ner=None):
         self.eval()
         local_scores, num_classes, rel_type_mask, coref_scores = self.compute_score(x)
-
-        # TODO: Aggrergate relations using coreference
-
-        assert isinstance(ner, list), "ner should be a list of list of spans like [[(1, 2, 'PER'), (3, 4, 'ORG'), ...], ]"
-
-        # if isinstance(x['classes_to_id'], dict):
-        #     x['classes_to_id'] = [x['classes_to_id']] * len(x['tokens'])
-        rels = []
-        for i, _ in enumerate(x["tokens"]):
-            local_i = local_scores[i]  # Predictions for the i-th item in the batch
-            # shape ([num_pairs, num_classes])
-            probabilities = torch.sigmoid(local_i)  # Convert logits to probabilities
-
-            # Get the valid classes (relation types) for this instance
-            types_i = list(x['classes_to_id'][i].keys())
-            num_classes_i = len(types_i)
-
-            # Iterate over all possible pairs and relation types
-            triggered_relations = [i.tolist() for i in torch.where(probabilities > threshold)]
-            # triggered_relations --> tuple of two lists, 
-            # one for pair_idx * num_triggered_classes (based on threshold) 
-            # and one for the corresponding tirggered rel_type_id, e.g pair [3, 3, 3] have rel type [0, 4, 5]
-            rels_i = []
-            for pair_idx, rel_type_idx in zip(*triggered_relations):
-                    
-                # Ensure the relation type index is valid for this instance
-                if rel_type_idx < num_classes_i:
-
-                    # Check if the pair index is within the bounds of the entity pairs
-                    all_negative_one_mask = (x['relations_idx'][i] == -1).all(dim=(-1, -2))
-                    num_valid_pairs = (~all_negative_one_mask).sum().item()
-                    
-                    if pair_idx < num_valid_pairs:   # len(x["relations_idx"][i])
-
-                        score = probabilities[pair_idx, rel_type_idx].item()
-                        # Get the entity pair and relation type
-                        entity_pair = x["relations_idx"][i][pair_idx] 
-                        relation_type = types_i[rel_type_idx]
-                    
-                        rels_i.append((entity_pair.cpu().numpy().tolist(), relation_type, score))
-            
-            rels.append(rels_i)
+        
+        probabilities = torch.sigmoid(local_scores)
+        triggered_relations = probabilities > threshold
+        
+        # Get indices where relations are triggered
+        batch_indices, pair_indices, rel_type_indices = torch.nonzero(triggered_relations, as_tuple=True)
+        
+        # Get scores
+        scores = probabilities[batch_indices, pair_indices, rel_type_indices]
+        
+        # Build a list of all classes_to_id mappings
+        types_list = [list(classes.keys()) for classes in x['classes_to_id']]
+        
+        # Convert indices to numpy arrays for easy handling
+        batch_indices_np = batch_indices.cpu().numpy()
+        pair_indices_np = pair_indices.cpu().numpy()
+        rel_type_indices_np = rel_type_indices.cpu().numpy()
+        scores_np = scores.cpu().numpy()
+        
+        # Get the number of relation types for each example in the batch_indices
+        type_lengths = np.array([len(types_list[i]) for i in batch_indices_np])
+        
+        # Build a mask for valid relation type indices
+        valid_mask = rel_type_indices_np < type_lengths
+        
+        # Filter indices and scores based on the valid_mask
+        batch_indices_np = batch_indices_np[valid_mask]
+        pair_indices_np = pair_indices_np[valid_mask]
+        rel_type_indices_np = rel_type_indices_np[valid_mask]
+        scores_np = scores_np[valid_mask]
+        
+        # Map relation type indices to actual relation type strings
+        relation_types = [types_list[i][rel_type_indices_np[idx]] for idx, i in enumerate(batch_indices_np)]
+        
+        # Get entity pairs
+        entity_pairs = [x['relations_idx'][i][pair_indices_np[idx]] for idx, i in enumerate(batch_indices_np)]
+        entity_pairs = torch.stack(entity_pairs)
+        entity_pairs_np = entity_pairs.cpu().numpy()
+        
+        # Collect relations per example
+        rels = [[] for _ in range(len(x["tokens"]))]
+        for idx in range(len(batch_indices_np)):
+            i = batch_indices_np[idx]
+            entity_pair = entity_pairs_np[idx].tolist()
+            relation_type = relation_types[idx]
+            score = scores_np[idx].item()
+            rels[i].append((entity_pair, relation_type, score))
+        
         return rels
+
 
     def predict_relations(self, text, labels, flat_ner=True, threshold=0.5, ner=None, top_k=-1):
         return self.batch_predict_relations([text], labels, flat_ner=flat_ner, threshold=threshold, ner=[ner], top_k=top_k)[0]
@@ -484,7 +486,6 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
                     classes = list(x['classes_to_id'][0].keys())
                     logger.info(f"## Evaluation x['classes_to_id'][0] (showing {min(15, len(classes))}/{len(classes)}) --> {classes[:min(15, len(classes))]}")
                 ner = x['entities']
-
 
                 batch_predictions = self.predict(x, flat_ner, threshold, ner)
 
