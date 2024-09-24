@@ -339,12 +339,14 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
             elif eval_data is not None:
                 with torch.no_grad():
 
-                    # TESTING
-                    logger.info("Running testing...")
-                    test_best_f1, test_best_f1_ign, test_best_p, test_best_r = run_evaluation(
-                        ckpt_dir=log_dir, use_gold_coref=True, 
-                        use_auxiliary_coref=False, model=model)
-                    logger.info(f"Test F1: {test_best_f1} | Test F1 Ignore: {test_best_f1_ign} | Test P: {test_best_p} | Test R: {test_best_r}")
+                    # DocRED-specific testing
+                    if config.dataset_name.lower() == 'redocred':
+                        logger.info("Running testing...")
+                        test_best_f1, test_best_f1_ign, test_best_p, test_best_r = run_evaluation(
+                            ckpt_dir=log_dir, use_gold_coref=True, 
+                            use_auxiliary_coref=False, model=model)
+                        logger.info(f"Test F1: {test_best_f1} | Test F1 Ignore: {test_best_f1_ign} | Test P: {test_best_p} | Test R: {test_best_r}")
+                    #######
 
                     logger.info('Evaluating...')
                     logger.info(f'Taking top k = {top_k} predictions for each relation...')
