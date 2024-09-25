@@ -60,8 +60,7 @@ def run_inference(test_set, model):
         batch_size=16,
         relation_types=[],
         top_k=1,
-        return_preds=True,
-        optimized=True
+        return_preds=True
     )
     return preds
 

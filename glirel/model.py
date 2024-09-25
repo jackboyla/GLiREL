@@ -327,56 +327,9 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
         return {'total_loss': total_loss} # total_loss is rel_loss if no coref_classifier
 
-    @torch.no_grad()
-    def old_predict(self, x, flat_ner=False, threshold=0.5, ner=None):
-        self.eval()
-        local_scores, num_classes, rel_type_mask, coref_scores = self.compute_score(x)
-
-        # TODO: Aggrergate relations using coreference
-
-        assert isinstance(ner, list), "ner should be a list of list of spans like [[(1, 2, 'PER'), (3, 4, 'ORG'), ...], ]"
-
-        # if isinstance(x['classes_to_id'], dict):
-        #     x['classes_to_id'] = [x['classes_to_id']] * len(x['tokens'])
-        rels = []
-        for i, _ in enumerate(x["tokens"]):
-            local_i = local_scores[i]  # Predictions for the i-th item in the batch
-            # shape ([num_pairs, num_classes])
-            probabilities = torch.sigmoid(local_i)  # Convert logits to probabilities
-
-            # Get the valid classes (relation types) for this instance
-            types_i = list(x['classes_to_id'][i].keys())
-            num_classes_i = len(types_i)
-
-            # Iterate over all possible pairs and relation types
-            triggered_relations = [i.tolist() for i in torch.where(probabilities > threshold)]
-            # triggered_relations --> tuple of two lists, 
-            # one for pair_idx * num_triggered_classes (based on threshold) 
-            # and one for the corresponding tirggered rel_type_id, e.g pair [3, 3, 3] have rel type [0, 4, 5]
-            rels_i = []
-            for pair_idx, rel_type_idx in zip(*triggered_relations):
-                    
-                # Ensure the relation type index is valid for this instance
-                if rel_type_idx < num_classes_i:
-
-                    # Check if the pair index is within the bounds of the entity pairs
-                    all_negative_one_mask = (x['relations_idx'][i] == -1).all(dim=(-1, -2))
-                    num_valid_pairs = (~all_negative_one_mask).sum().item()
-                    
-                    if pair_idx < num_valid_pairs:   # len(x["relations_idx"][i])
-
-                        score = probabilities[pair_idx, rel_type_idx].item()
-                        # Get the entity pair and relation type
-                        entity_pair = x["relations_idx"][i][pair_idx] 
-                        relation_type = types_i[rel_type_idx]
-                    
-                        rels_i.append((entity_pair.cpu().numpy().tolist(), relation_type, score))
-            
-            rels.append(rels_i)
-        return rels
 
     @torch.no_grad()
-    def optimized_predict(self, x, flat_ner=False, threshold=0.5, ner=None):
+    def predict(self, x, flat_ner=False, threshold=0.5, ner=None):
         self.eval()
         local_scores, num_classes, rel_type_mask, coref_scores = self.compute_score(x)
         
@@ -563,8 +516,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
     def evaluate(
             self, test_data, flat_ner=False, 
             threshold=0.5, batch_size=12, relation_types=None, 
-            top_k=1, return_preds=False, dataset_name: str = None,
-            optimized=False
+            top_k=1, return_preds=False, dataset_name: str = None
         ):
         self.eval()
         logger.info(f"Number of classes to evaluate with --> {len(relation_types)}")
@@ -582,10 +534,8 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
                     logger.info(f"## Evaluation x['classes_to_id'][0] (showing {min(15, len(classes))}/{len(classes)}) --> {classes[:min(15, len(classes))]}")
                 ner = x['entities']
 
-                if optimized:
-                    batch_predictions = self.optimized_predict(x, flat_ner, threshold, ner)
-                else:
-                    batch_predictions = self.old_predict(x, flat_ner, threshold, ner)
+                batch_predictions = self.predict(x, flat_ner, threshold, ner)
+
 
                 all_trues.extend(x["relations"])
                 # format relation predictions for metrics calculation

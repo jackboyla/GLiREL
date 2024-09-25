@@ -351,21 +351,6 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
                     logger.info('Evaluating...')
                     logger.info(f'Taking top k = {top_k} predictions for each relation...')
 
-                    start = time.time()
-                    optimized_results, micro_f1, macro_f1 = model.evaluate(
-                        eval_data, 
-                        flat_ner=True, 
-                        threshold=config.eval_threshold, 
-                        batch_size=config.eval_batch_size,
-                        relation_types=eval_rel_types if config.fixed_relation_types else [],
-                        top_k=top_k,
-                        dataset_name=config.dataset_name,
-                        optimized=True
-                    )
-                    end = time.time()
-                    logger.info(f"Time taken for optimized evaluation: {round(end - start)} seconds")
-
-                    start = time.time()
                     results, micro_f1, macro_f1 = model.evaluate(
                         eval_data, 
                         flat_ner=True, 
@@ -373,11 +358,8 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
                         batch_size=config.eval_batch_size,
                         relation_types=eval_rel_types if config.fixed_relation_types else [],
                         top_k=top_k,
-                        dataset_name=config.dataset_name,
-                        optimized=False
+                        dataset_name=config.dataset_name
                     )
-                    end = time.time()
-                    logger.info(f"Time taken for optimized evaluation: {round(end - start)} seconds")
 
 
                     if wandb_sweep:
@@ -392,7 +374,6 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
                         run.log({"eval_f1_micro": micro_f1, "eval_f1_macro": macro_f1})
 
                     logger.info(f"Step={step}\n{results}")                    
-                    logger.info(f"Step={step}\n{optimized_results}") 
 
                     saved_models.append((current_path, macro_f1))
                     if len(saved_models) > max_saves:
