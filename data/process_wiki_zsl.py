@@ -5,11 +5,11 @@ random.seed(12)
 
 import gdown
 
-url = 'https://drive.google.com/uc?id=1ELFGUIYDClmh9GrEHjFYoE_VI1t2a5nK'
+file_id = '1TMYvAbe9wsB5GiWcUL5bMAs9x6CpvnAj' # https://github.com/vhientran/Code-ZSRE?tab=readme-ov-file
 output = 'wiki_all.json'
 if not os.path.exists(output):
     print("Downloading Wiki_ZSL dataset...")
-    gdown.download(url, output, quiet=False)
+    gdown.download(id=file_id, output=output, quiet=False)
 
 
 with open('wiki_all.json', 'r') as f:    # len --> 93483
