@@ -60,7 +60,8 @@ def run_inference(test_set, model):
         batch_size=16,
         relation_types=[],
         top_k=1,
-        return_preds=True
+        return_preds=True,
+        optimized=True
     )
     return preds
 
@@ -132,8 +133,19 @@ def run_evaluation(ckpt_dir, use_gold_coref=False, use_auxiliary_coref=False, mo
 
     # entity_to_cluster_idx_list --> (128, 129): 0, (33, 34): 0, (144, 145): 0, (0, 6): 0, ...
 
-    # propagate labels using coreference clusters
-    cluster_relations_list = utils.aggregate_cluster_relations(entity_to_cluster_idx, preds)
+    
+    try:
+        # propagate labels using coreference clusters
+        cluster_relations_list = utils.aggregate_cluster_relations(entity_to_cluster_idx, preds)
+    except Exception as e:
+        problems = []
+        for i, b in enumerate(preds):
+            for j, p in enumerate(b):
+                if p['head']['position'] == [-1,-1] or p['tail']['position'] == [-1,-1]:
+                    problems.append((i, j, p))
+
+        print(f"Error: {e}")
+
     
     # [ [{'h_idx': 0, 't_idx': 2, 'r': 'performer'}, ...], ...]
 

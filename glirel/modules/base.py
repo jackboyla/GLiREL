@@ -271,7 +271,7 @@ class InstructBase(nn.Module):
                     id_to_class = {k: v for v, k in class_to_id.items()}
                     class_to_ids.append(class_to_id)
                     id_to_classes.append(id_to_class)
-                logger.info(f"Number of eval relation types per instance: {[len(d) for d in class_to_ids]}")
+                # logger.info(f"Number of eval relation types per instance: {[len(d) for d in class_to_ids]}")
 
             
             batch = [

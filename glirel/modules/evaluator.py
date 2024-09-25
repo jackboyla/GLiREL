@@ -71,7 +71,7 @@ class RelEvaluator:
         for type_name, head, tail, idx in y_pred:
             # NOTE: we are only interested in the evaluating against 
             # annotated relations that are present in the true data (i.e. not the ones that are not annotated in the case of FewRel)
-            if self.dataset_name == "few_rel":
+            if self.dataset_name in ["few_rel"]: #  "wiki_zsl"
                 if any((head, tail, idx) in relations_true[t] for t in relations_true.keys()):
                     relations_pred[type_name].add((head, tail, idx))
             else:
