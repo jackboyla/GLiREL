@@ -497,7 +497,7 @@ def main(args):
 
 
     # Prep data
-
+    logger.info(f"Loading data from {config.train_data}...")
     if isinstance(config.train_data, str):
         config.train_data = [config.train_data]
 
@@ -506,9 +506,7 @@ def main(args):
         if train_subset.endswith('.jsonl'):
             with open(train_subset, 'r') as f:
                 train_subset = [json.loads(line) for line in f]
-                # train_subset = []
-                # for i in range(1_000):
-                #     train_subset.append(json.loads(next(f)))
+
         elif train_subset.endswith('.json'):
             with open(train_subset, 'r') as f:
                 train_subset = json.load(f)

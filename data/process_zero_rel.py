@@ -102,6 +102,7 @@ def transform_zero_rel(data):
 
 
 save_path = './zero_rel_all.jsonl'
+print(f"Saving dataset of len {len(ds)} to {save_path} in batches")
 with open(save_path, 'w') as f:
     step_size = 10_000
     for step in range(0, len(ds), step_size):
@@ -117,7 +118,7 @@ print(f"Saved to {save_path}")
 
 # post processing #########################
 print("Post processing...")
-print(f"Assigning 'no relation' label to relations with troublesome labels... (see process_zero_rel.py)")
+print(f"Assigning 'no relation' label to relations with troublesome labels... (see data/process_zero_rel.py)")
 
 with open(save_path, 'r') as f:
     data = [json.loads(line) for line in f]
@@ -125,7 +126,7 @@ with open(save_path, 'r') as f:
 relationship_counts = {}
 raw_relationship_string = {}
 
-for item in data:
+for item in tqdm(data, desc="Counting relations"):
     relations = item['relations']
     for relation in relations:
         relation_text = relation['relation_text']
@@ -141,7 +142,7 @@ for item in data:
 
 
 reassign_count = 0
-for item in tqdm(data):
+for item in tqdm(data, desc="Reassigning"):
     relations = item['relations']
     for relation in relations:
         rel_text = relation['relation_text']
@@ -163,6 +164,6 @@ print(f"Reassigned {reassign_count} relations to 'no relation'")
     
 
 with open(save_path, 'w') as f:
-    for item in data:
+    for item in tqdm(data, desc="Saving"):
         f.write(json.dumps(item) + '\n')
 print(f"Saved to {save_path}")
