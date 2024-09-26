@@ -32,7 +32,7 @@ logging.basicConfig(level=logging.INFO,
 
 '''
 
-python train.py --config configs/config_wiki_zsl.yaml
+python train.py --config configs/config_wiki_zsl.yaml --wandb_sweep
 
 
 python train.py --config configs/config_few_rel.yaml
@@ -43,20 +43,19 @@ python train.py --config configs/config_few_rel.yaml
 # If doing hyperparameter sweeping, define sweep config here
 
 sweep_configuration = {
-    "method": "grid", # https://docs.wandb.ai/guides/sweeps/sweep-config-keys#method
+    "method": "random", # https://docs.wandb.ai/guides/sweeps/sweep-config-keys#method
     "metric": {"goal": "maximize", "name": "eval_f1_micro"},
     "parameters": {
         "scorer": {"values": ["dot", "dot_norm", "dot_thresh", "concat_proj"]},
-        "refine_prompt": {"values": [False, True]},
-        "refine_relaton": {"values": [False, True]},
         # "num_train_rel_types": {"values": [15, 20, 25, 30, 35, 40]},
         # "num_unseen_rel_types": {"values": [15]},
         # "random_drop": {"values": [True, False]},
+        "lr_encoder": {"max": 1e-3, "min": 5e-5},
         "lr_others": {"max": 1e-3, "min": 5e-5},
         'num_layers_freeze': {"values": [2, 4, 7, 10]},
-        "refine_prompt": {[True, False]},
-        "refine_relation": {[True, False]},
-        # "dropout": {"max": 0.55, "min": 0.3},
+        "refine_prompt": {"values": [True, False]},
+        "refine_relation": {"values": [True, False]},
+        "dropout": {"max": 0.55, "min": 0.3},
         # "model_name": {"values": ["microsoft/deberta-v3-large", "microsoft/deberta-v3-small"]},
     },
 }
@@ -198,6 +197,7 @@ def dirty_split_data_by_relation_type(data, num_unseen_rel_types, max_test_size)
 def freeze_n_layers(model, N):
     """
     Freezes or unfreezes the first n layers of the model.
+    See DeBERTa model specs here: https://github.com/microsoft/DeBERTa?tab=readme-ov-file#pre-trained-models
 
     Args:
         model: Assumes model has a DeBERTa model under `model.token_rep_layer`
@@ -205,16 +205,16 @@ def freeze_n_layers(model, N):
         freeze (bool): If True, freeze the layers; if False, unfreeze them.
     """
     # Ensure N is within the valid range
-    import ipdb; ipdb.set_trace()
-    total_layers = len(model.token_rep_layer.bert_layer.encoder.layer)
+    total_layers = len(model.token_rep_layer.bert_layer.model.encoder.layer)
     if N < 0 or N > total_layers:
-        raise ValueError(f"N must be between 0 and {total_layers}, got {N}")
+        raise ValueError(f"N must be between 0 and total layers ({total_layers}), got {N}")
 
     # Iterate over the first n layers
-    for layer in model.token_rep_layer.bert_layer.encoder.layer[:N]:
+    for layer in model.token_rep_layer.bert_layer.model.encoder.layer[:N]:
         for param in layer.parameters():
             param.requires_grad = False
 
+    logger.info(f"Freezing the first {N} layers of the model")
     return model
 
 
@@ -365,7 +365,7 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
             elif eval_data is not None:
                 with torch.no_grad():
 
-                    # DocRED-specific testing
+                    # (Re-)DocRED-specific testing
                     if config.dataset_name.lower() == 'redocred':
                         logger.info("Running testing...")
                         test_best_f1, test_best_f1_ign, test_best_p, test_best_r = run_evaluation(
@@ -546,7 +546,7 @@ def main(args):
 
     # freeze params if requested
     if config.num_layers_freeze:
-        model = freeze_n_layers(model, n=config.num_layers_freeze)
+        model = freeze_n_layers(model, N=config.num_layers_freeze)
 
     # Get number of parameters (trainable and total)
     num_params = sum(p.numel() for p in model.parameters())
