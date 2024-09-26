@@ -120,7 +120,7 @@ class RelMarkerv0(nn.Module):
 
         self.out_project = create_projection_layer(hidden_size * 2, dropout, hidden_size)
 
-    def forward(self, h: torch.Tensor, span_idx: torch.Tensor, relations_idx: torch.Tensor) -> torch.Tensor:
+    def forward(self, h: torch.Tensor, span_idx: torch.Tensor, relations_idx: torch.Tensor = None) -> torch.Tensor:
         """
         h: torch.Tensor - The hidden states of the shape [batch_size, seq_len, hidden_size]
         span_idx: torch.Tensor - The span indices of entities of the shape [batch_size, num_entities, 2]
@@ -130,6 +130,7 @@ class RelMarkerv0(nn.Module):
         entity_reps = self.span_marker(h, span_idx)  #  ([B, number_of_entities, D])  
 
         combined_pairs = get_entity_pair_reps_v2(entity_reps, span_idx=span_idx, relations_idx=relations_idx)
+        # combined_pairs = get_entity_pair_reps(entity_reps)
 
         # combined_pairs is now a tensor of shape [batch_size, num_pairs, 2*hidden_size]
         # where num_pairs is num_entities * (num_entities - 1) / 2, the number of unique pairs.
