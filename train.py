@@ -2,6 +2,7 @@ import argparse
 import os
 
 import torch
+import numpy as np
 from tqdm import tqdm
 from transformers import get_cosine_schedule_with_warmup, get_cosine_with_hard_restarts_schedule_with_warmup
 
@@ -40,29 +41,6 @@ python train.py --config configs/config_few_rel.yaml
 
 '''
 
-# If doing hyperparameter sweeping, define sweep config here
-
-sweep_configuration = {
-    "method": "random", # https://docs.wandb.ai/guides/sweeps/sweep-config-keys#method
-    "metric": {"goal": "maximize", "name": "eval_f1_micro"},
-    "parameters": {
-        "scorer": {"values": ["dot", "dot_norm", "dot_thresh", "concat_proj"]},
-        # "num_train_rel_types": {"values": [15, 20, 25, 30, 35, 40]},
-        # "num_unseen_rel_types": {"values": [15]},
-        # "random_drop": {"values": [True, False]},
-        "lr_encoder": {"max": 1e-3, "min": 5e-5},
-        "lr_others": {"max": 1e-3, "min": 5e-5},
-        'num_layers_freeze': {"values": [2, 4, 7, 10]},
-        "refine_prompt": {"values": [True, False]},
-        "refine_relation": {"values": [True, False]},
-        "dropout": {"max": 0.55, "min": 0.3},
-        "loss_func": {"values": ["binary_cross_entropy_loss", "focal_loss"]},
-        "alpha": {"values": [0.3, 0.5, 0.75]},  # focal loss only
-        "gamma": {"values": [1, 3, 5]},         # focal loss only
-        # "model_name": {"values": ["microsoft/deberta-v3-large", "microsoft/deberta-v3-small"]},
-    },
-}
-
 
 def create_parser():
     parser = argparse.ArgumentParser(description="Zero-shot Relation Extraction")
@@ -70,6 +48,7 @@ def create_parser():
     parser.add_argument('--log_dir', type=str, default=None, help='Path to the log directory')
     parser.add_argument("--wandb_log", action="store_true", help="Activate wandb logging")
     parser.add_argument("--wandb_sweep", action="store_true", help="Activate wandb hyperparameter sweep")
+    parser.add_argument("--sweep_method", type=str, default="grid", help="Sweep method (grid, random, bayes)")
     parser.add_argument("--skip_splitting", action="store_true", help="Skip dataset splitting into train and eval sets")
     return parser
 
@@ -221,12 +200,68 @@ def freeze_n_layers(model, N):
     return model
 
 
+class EarlyStopping:
+    def __init__(self, patience, delta, max_saves):
+        """
+        Args:
+            patience (int): How long to wait after last time validation metric improved.
+            verbose (bool): If True, prints a message for each validation metric improvement.
+            delta (float): Minimum change in the monitored metric to qualify as an improvement.
+            max_saves (int): Maximum number of models to save.
+        """
+        self.patience = patience
+        self.delta = delta
+        self.max_saves = max_saves
+
+        self.saved_models = []
+        self.counter = 0
+        self.best_score = None
+        self.early_stop = False
+        self.best_metric = -np.Inf
+
+    def __call__(self, metric, model, save_path) -> None:
+        score = metric
+
+        if self.best_score is None:
+            self.best_score = score
+            self.save_checkpoint(score, model, save_path)
+        elif score < self.best_score + self.delta:
+            self.counter += 1
+            logger.info(f"Validation metric did not improve by delta ({self.delta}): ({self.best_score:.6f} --> {score:.6f}).")
+            logger.info(f'EarlyStopping counter: {self.counter} out of {self.patience}')
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            logger.info(f'Validation metric improved!! ({self.best_score:.6f} --> {score:.6f}).  Saving model ...')
+            self.best_score = score
+            self.save_checkpoint(score, model, save_path)
+            self.counter = 0
+
+    def save_checkpoint(self, score, model, save_path) -> None:
+        '''Saves model when validation metric improves.'''
+        self.best_metric = score
+
+        model.save_pretrained(save_path)
+        logger.info(f'Model saved at {save_path}')
+        self.saved_models.append((save_path, score))
+
+        if len(self.saved_models) > self.max_saves:
+            self.saved_models.sort(key=lambda x: x[1], reverse=True)  # Sort models by score
+            lowest_f1_model = self.saved_models.pop()                 # Remove the model with the lowest score
+            shutil.rmtree(lowest_f1_model[0])
+            logger.info(f"Removed model with score at {lowest_f1_model[0]}")
+        return
+
 # train function
 def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types, eval_data=None, 
           num_steps=1000, eval_every=100, top_k=1, log_dir=None,
           wandb_log=False, wandb_sweep=False, warmup_ratio=0.1, train_batch_size=8, device='cuda', use_amp=True):
 
-    max_saves = 2  # Maximum number of saved models
+    # EarlyStopping
+    patience = config.early_stopping_patience if hasattr(config, 'early_stopping_patience') else 10
+    delta = config.early_stopping_delta if hasattr(config, 'early_stopping_delta') else 0.0
+    early_stopping = EarlyStopping(patience=patience, delta=delta, max_saves=2)
+
 
     if wandb_log:
         # Start a W&B Run with wandb.init
@@ -238,6 +273,10 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
 
     model.train()
+
+    # freeze params if requested
+    if hasattr(config, 'num_layers_freeze') and config.num_layers_freeze is not None:
+        model = freeze_n_layers(model, N=config.num_layers_freeze)
 
     # initialize data loaders
     train_loader = model.create_dataloader(train_data, batch_size=train_batch_size, shuffle=False, train_relation_types=train_rel_types)
@@ -267,8 +306,7 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
 
     iter_train_loader = iter(train_loader)
 
-    saved_models = []
-    best_f1 = 0
+    prev_model_path = None
 
     accumulated_steps = 0 
     start = time.time()
@@ -326,9 +364,9 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
             # optimizer.step()        # Update parameters
             scaler.step(optimizer)
             scaler.update()
-            scheduler.step()        # Update learning rate schedule
+            scheduler.step()                        # Update learning rate schedule
             optimizer.zero_grad(set_to_none=True)   # Clear gradients after update (set_to_none=True here can modestly improve performance)
-            accumulated_steps = 0   # Reset accumulation counter
+            accumulated_steps = 0                   # Reset accumulation counter
 
 
         description = f"step: {step} | epoch: {step // len(train_loader)} | loss: {loss.item():.2f}"
@@ -356,14 +394,16 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
             model.eval()
 
             current_path = os.path.join(log_dir, f'model_{step + 1}')
-            model.save_pretrained(current_path)
-            logger.info(f"Model saved at {current_path}")
 
+            # if there's no eval data, save the model and remove the previous one
             if eval_data is None:
-                saved_models.append(current_path)
-                if len(saved_models) > max_saves:
-                    oldest_model = saved_models.pop(0)
-                    shutil.rmtree(oldest_model)
+                if prev_model_path:
+                    shutil.rmtree(prev_model_path)
+
+                model.save_pretrained(current_path)
+                logger.info(f"Model saved at {current_path}")
+                prev_model_path = current_path
+
             
             elif eval_data is not None:
                 with torch.no_grad():
@@ -402,21 +442,19 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
                     elif run is not None:
                         run.log({"eval_f1_micro": micro_f1, "eval_f1_macro": macro_f1})
 
-                    logger.info(f"Step={step}\n{results}")                    
+                    logger.info(f"Step={step}\n{results}")  
 
-                    saved_models.append((current_path, macro_f1))
-                    if len(saved_models) > max_saves:
-                        saved_models.sort(key=lambda x: x[1], reverse=True)  # Sort models by macro F1 score
-                        lowest_f1_model = saved_models.pop()  # Remove the model with the lowest macro F1 score
-                        if lowest_f1_model[1] < best_f1:
-                            shutil.rmtree(lowest_f1_model[0])  # Delete the model file if its score is the lowest
-                        
-                        best_f1 = max(best_f1, macro_f1)  # Update the best score
-            
+                    early_stopping(metric=micro_f1, model=model, save_path=current_path)
+                    if early_stopping.early_stop:
+                        logger.info("Early stopping!")
+                        return
 
+            # resume training
             model.train()
+            if hasattr(config, 'num_layers_freeze') and config.num_layers_freeze is not None:
+                model = freeze_n_layers(model, N=config.num_layers_freeze)
                 
-            torch.cuda.empty_cache()  # Clear cache after evaluation to prepare for training
+            torch.cuda.empty_cache()
             gc.collect()
 
         pbar.set_description(description)
@@ -547,9 +585,6 @@ def main(args):
     else:
         model = GLiREL(config)
 
-    # freeze params if requested
-    if config.num_layers_freeze:
-        model = freeze_n_layers(model, N=config.num_layers_freeze)
 
     # Get number of parameters (trainable and total)
     num_params = sum(p.numel() for p in model.parameters())
@@ -589,6 +624,29 @@ if __name__ == "__main__":
     assert not (args.wandb_log is True and args.wandb_sweep is True), "Cannot use both wandb logging and wandb sweep at the same time."
 
     if args.wandb_sweep:
+
+        # If doing hyperparameter sweeping, define sweep config here
+
+        sweep_configuration = {
+            "method": args.sweep_method, # https://docs.wandb.ai/guides/sweeps/sweep-config-keys#method
+            "metric": {"goal": "maximize", "name": "eval_f1_micro"},
+            "parameters": {
+                "scorer": {"values": ["dot", "dot_norm", "dot_thresh", "concat_proj"]},
+                # "num_train_rel_types": {"values": [15, 20, 25, 30, 35, 40]},
+                # "num_unseen_rel_types": {"values": [15]},
+                # "random_drop": {"values": [True, False]},
+                "lr_encoder": {"values": [1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3]},
+                "lr_others": {"values": [1e-4, 5e-4, 1e-3, 5e-3]},
+                'num_layers_freeze': {"values": [None, 2, 4, 7, 10]},
+                "refine_prompt": {"values": [True, False]},
+                "refine_relation": {"values": [True, False]},
+                "dropout": {"values": [0.3, 0.4, 0.5]},
+                "loss_func": {"values": ["binary_cross_entropy_loss", "focal_loss"]},
+                "alpha": {"values": [0.3, 0.5, 0.75]},  # focal loss only
+                "gamma": {"values": [1, 3, 5]},         # focal loss only
+                # "model_name": {"values": ["microsoft/deberta-v3-large", "microsoft/deberta-v3-small"]},
+            },
+        }
         # get day and time as string
         now = datetime.now()
         dt_string = now.strftime("%d-%m-%Y--%H-%M-%S")
