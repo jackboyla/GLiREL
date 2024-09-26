@@ -52,7 +52,10 @@ sweep_configuration = {
         # "num_train_rel_types": {"values": [15, 20, 25, 30, 35, 40]},
         # "num_unseen_rel_types": {"values": [15]},
         # "random_drop": {"values": [True, False]},
-        # "lr_others": {"max": 1e-3, "min": 5e-5},
+        "lr_others": {"max": 1e-3, "min": 5e-5},
+        'num_layers_freeze': {"values": [2, 4, 7, 10]},
+        "refine_prompt": {[True, False]},
+        "refine_relation": {[True, False]},
         # "dropout": {"max": 0.55, "min": 0.3},
         # "model_name": {"values": ["microsoft/deberta-v3-large", "microsoft/deberta-v3-small"]},
     },
@@ -190,6 +193,29 @@ def dirty_split_data_by_relation_type(data, num_unseen_rel_types, max_test_size)
 
 
     return train_data, test_data
+
+
+def freeze_n_layers(model, N):
+    """
+    Freezes or unfreezes the first n layers of the model.
+
+    Args:
+        model: Assumes model has a DeBERTa model under `model.token_rep_layer`
+        n (int): Number of layers to freeze/unfreeze.
+        freeze (bool): If True, freeze the layers; if False, unfreeze them.
+    """
+    # Ensure N is within the valid range
+    import ipdb; ipdb.set_trace()
+    total_layers = len(model.token_rep_layer.bert_layer.encoder.layer)
+    if N < 0 or N > total_layers:
+        raise ValueError(f"N must be between 0 and {total_layers}, got {N}")
+
+    # Iterate over the first n layers
+    for layer in model.token_rep_layer.bert_layer.encoder.layer[:N]:
+        for param in layer.parameters():
+            param.requires_grad = False
+
+    return model
 
 
 # train function
@@ -499,8 +525,6 @@ def main(args):
         eval_data = eval_data
         train_data = data
 
-    # train_data = train_data[:3]
-    # eval_data = train_data[:3]
 
     train_rel_types = get_unique_relations(train_data)
     eval_rel_types = get_unique_relations(eval_data) if eval_data is not None else None
@@ -519,6 +543,10 @@ def main(args):
         model.config = config
     else:
         model = GLiREL(config)
+
+    # freeze params if requested
+    if config.num_layers_freeze:
+        model = freeze_n_layers(model, n=config.num_layers_freeze)
 
     # Get number of parameters (trainable and total)
     num_params = sum(p.numel() for p in model.parameters())
@@ -544,7 +572,7 @@ def main(args):
     logger.info(f"Using config: \n{json.dumps(config.__dict__, indent=2)}\n\n")
 
 
-    train(model, optimizer, train_data, config, train_rel_types=train_rel_types, eval_rel_types=eval_rel_types, eval_data=eval_data,
+    train(model, optimizer, train_data=train_data, config=config, train_rel_types=train_rel_types, eval_rel_types=eval_rel_types, eval_data=eval_data,
           num_steps=config.num_steps, eval_every=config.eval_every, top_k=config.top_k,
           log_dir=config.log_dir, wandb_log=args.wandb_log, wandb_sweep=args.wandb_sweep, warmup_ratio=config.warmup_ratio, train_batch_size=config.train_batch_size,
           device=device, use_amp=use_amp)
