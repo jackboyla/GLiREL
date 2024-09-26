@@ -56,6 +56,9 @@ sweep_configuration = {
         "refine_prompt": {"values": [True, False]},
         "refine_relation": {"values": [True, False]},
         "dropout": {"max": 0.55, "min": 0.3},
+        "loss_func": {"values": ["binary_cross_entropy_loss", "focal_loss"]},
+        "alpha": {"values": [0.3, 0.5, 0.75]},  # focal loss only
+        "gamma": {"values": [1, 3, 5]},         # focal loss only
         # "model_name": {"values": ["microsoft/deberta-v3-large", "microsoft/deberta-v3-small"]},
     },
 }
