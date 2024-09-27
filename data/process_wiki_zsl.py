@@ -3,6 +3,7 @@ import random
 import os
 random.seed(12)
 
+from tqdm import tqdm
 import gdown
 
 file_id = '1TMYvAbe9wsB5GiWcUL5bMAs9x6CpvnAj' # https://github.com/vhientran/Code-ZSRE?tab=readme-ov-file
@@ -179,6 +180,22 @@ transformed_data = transform_wiki_zsl(data)
 
 # shuffle
 random.shuffle(transformed_data)
+
+# count up relation types
+relationship_counts = {}
+for item in tqdm(transformed_data, desc="Counting relations"):
+    relations = item['relations']
+    for relation in relations:
+        relation_text = relation['relation_text']
+        if relation_text in relationship_counts:
+            relationship_counts[relation_text] += 1
+        else:
+            relationship_counts[relation_text] = 1
+
+print(f"Relationship counts: {relationship_counts}")
+with open(f"wikiw_zsl_type_counts.json", "w") as f:
+    f.write(json.dumps(relationship_counts))
+
 
 save_path = './wiki_zsl_all.jsonl'
 with open(save_path, 'w') as f:
