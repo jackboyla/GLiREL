@@ -592,6 +592,7 @@ def main(args):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     use_amp = device != 'cpu' 
     model = model.to(device)
+    model.device = device
 
     lr_encoder = float(config.lr_encoder)
     lr_others = float(config.lr_others)
