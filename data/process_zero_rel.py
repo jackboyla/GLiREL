@@ -74,7 +74,7 @@ def transform_zero_rel(data):
                 "head": {"mention": head_text, "position": [head_start, head_end], "type": head_type},
                 "tail": {"mention": tail_text, "position": [tail_start, tail_end], "type": tail_type},
                 "relation_text": parse_generated_label(relation_text),
-                "raw_relation_text": relation_text,
+                "raw_relation_text": relation_text.lower(),
             })
             seen_rels.add(((head_start, head_end), (tail_start, tail_end)))
 
@@ -161,7 +161,21 @@ for item in tqdm(data, desc="Reassigning"):
 
 print(f"Reassigned {reassign_count} relations to 'no relation'")
 ########################################
-    
+
+# count up relation types
+relationship_counts = {}
+for item in tqdm(data, desc="Counting relations"):
+    relations = item['relations']
+    for relation in relations:
+        relation_text = relation['relation_text']
+        if relation_text in relationship_counts:
+            relationship_counts[relation_text] += 1
+        else:
+            relationship_counts[relation_text] = 1
+
+print(f"Relationship counts: {relationship_counts}")
+with open(f"zero_rel_type_counts.json", "w") as f:
+    f.write(json.dumps(relationship_counts))
 
 with open(save_path, 'w') as f:
     for item in tqdm(data, desc="Saving"):
