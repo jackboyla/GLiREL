@@ -48,6 +48,7 @@ def create_parser():
     parser.add_argument('--log_dir', type=str, default=None, help='Path to the log directory')
     parser.add_argument("--wandb_log", action="store_true", help="Activate wandb logging")
     parser.add_argument("--wandb_sweep", action="store_true", help="Activate wandb hyperparameter sweep")
+    parser.add_argument("--sweep_id", type=str, default=None, help="WandB Sweep ID")
     parser.add_argument("--sweep_method", type=str, default="grid", help="Sweep method (grid, random, bayes)")
     parser.add_argument("--skip_splitting", action="store_true", help="Skip dataset splitting into train and eval sets")
     return parser
@@ -200,6 +201,10 @@ def freeze_n_layers(model, N):
     return model
 
 
+class EarlyStoppingException(Exception):
+    pass
+
+
 class EarlyStopping:
     def __init__(self, patience, delta, max_saves):
         """
@@ -231,6 +236,8 @@ class EarlyStopping:
             logger.info(f'EarlyStopping counter: {self.counter} out of {self.patience}')
             if self.counter >= self.patience:
                 self.early_stop = True
+                logger.info(f'Early stopping at step {self.counter}')
+                raise EarlyStoppingException
         else:
             logger.info(f'Validation metric improved!! ({self.best_score:.6f} --> {score:.6f}).  Saving model ...')
             self.best_score = score
@@ -246,7 +253,7 @@ class EarlyStopping:
         self.saved_models.append((save_path, score))
 
         if len(self.saved_models) > self.max_saves:
-            self.saved_models.sort(key=lambda x: x[1], reverse=True)  # Sort models by score
+            self.saved_models.sort(key=lambda x: (x[1], x[0]), reverse=True) # Sort models by score, then by path
             lowest_f1_model = self.saved_models.pop()                 # Remove the model with the lowest score
             shutil.rmtree(lowest_f1_model[0])
             logger.info(f"Removed model with score at {lowest_f1_model[0]}")
@@ -258,9 +265,11 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
           wandb_log=False, wandb_sweep=False, warmup_ratio=0.1, train_batch_size=8, device='cuda', use_amp=True):
 
     # EarlyStopping
-    patience = config.early_stopping_patience if hasattr(config, 'early_stopping_patience') else 10
+    patience = config.early_stopping_patience if hasattr(config, 'early_stopping_patience') else None
+    patience = patience if patience is not None else 100
     delta = config.early_stopping_delta if hasattr(config, 'early_stopping_delta') else 0.0
-    early_stopping = EarlyStopping(patience=patience, delta=delta, max_saves=2)
+    delta = delta if delta is not None else 0.0
+    early_stopping = EarlyStopping(patience=patience, delta=delta, max_saves=1)
 
 
     if wandb_log:
@@ -420,7 +429,7 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
                     logger.info('Evaluating...')
                     logger.info(f'Taking top k = {top_k} predictions for each relation...')
 
-                    results, micro_f1, macro_f1 = model.evaluate(
+                    results, metric_dict = model.evaluate(
                         eval_data, 
                         flat_ner=True, 
                         threshold=config.eval_threshold, 
@@ -429,6 +438,8 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
                         top_k=top_k,
                         dataset_name=config.dataset_name
                     )
+                    micro_f1, micro_precision, micro_recall = metric_dict['micro_f1'], metric_dict['micro_precision'], metric_dict['micro_recall']
+                    macro_f1, macro_precision, macro_recall = metric_dict['macro_f1'], metric_dict['macro_precision'], metric_dict['macro_recall']
 
 
                     if wandb_sweep:
@@ -437,6 +448,10 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
                                 "epoch": step // len(train_loader),
                                 "eval_f1_micro": micro_f1,
                                 "eval_f1_macro": macro_f1,
+                                "eval_precision_micro": micro_precision,
+                                "eval_precision_macro": macro_precision,
+                                "eval_recall_micro": micro_recall,
+                                "eval_recall_macro": macro_recall,
                             }
                         )
                     elif run is not None:
@@ -445,9 +460,6 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
                     logger.info(f"Step={step}\n{results}")  
 
                     early_stopping(metric=micro_f1, model=model, save_path=current_path)
-                    if early_stopping.early_stop:
-                        logger.info("Early stopping!")
-                        return
 
             # resume training
             model.train()
@@ -609,10 +621,13 @@ def main(args):
     logger.info(f"Using config: \n{json.dumps(config.__dict__, indent=2)}\n\n")
 
 
-    train(model, optimizer, train_data=train_data, config=config, train_rel_types=train_rel_types, eval_rel_types=eval_rel_types, eval_data=eval_data,
-          num_steps=config.num_steps, eval_every=config.eval_every, top_k=config.top_k,
-          log_dir=config.log_dir, wandb_log=args.wandb_log, wandb_sweep=args.wandb_sweep, warmup_ratio=config.warmup_ratio, train_batch_size=config.train_batch_size,
-          device=device, use_amp=use_amp)
+    try:
+        train(model, optimizer, train_data=train_data, config=config, train_rel_types=train_rel_types, eval_rel_types=eval_rel_types, eval_data=eval_data,
+            num_steps=config.num_steps, eval_every=config.eval_every, top_k=config.top_k,
+            log_dir=config.log_dir, wandb_log=args.wandb_log, wandb_sweep=args.wandb_sweep, warmup_ratio=config.warmup_ratio, train_batch_size=config.train_batch_size,
+            device=device, use_amp=use_amp)
+    except EarlyStoppingException:
+        logger.info("Early stopping triggered.")
 
 
 if __name__ == "__main__":
@@ -654,9 +669,14 @@ if __name__ == "__main__":
 
 
         # Initialize sweep by passing in config
-        sweep_id = wandb.sweep(sweep=sweep_configuration, project="GLiREL")
+        project = "GLiREL"
+        if args.sweep_id:
+            logger.info(f"Resuming sweep with ID: {args.sweep_id}")
+            sweep_id = args.sweep_id
+        else:
+            sweep_id = wandb.sweep(sweep=sweep_configuration, project=project)
 
         # Start sweep job
-        wandb.agent(sweep_id, function=partial(main, args), count=10)
+        wandb.agent(sweep_id, function=partial(main, args), count=100, project=project)
     else:
         main(args)
