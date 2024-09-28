@@ -176,7 +176,7 @@ def eval(model, config, eval_rel_types, eval_data,
             logger.info('Evaluating...')
             logger.info(f'Taking top k = {top_k} predictions for each relation...')
 
-            results, micro_f1, macro_f1 = model.evaluate(
+            results, metric_dict = model.evaluate(
                 eval_data, 
                 flat_ner=True, 
                 threshold=config.eval_threshold, 
@@ -184,6 +184,9 @@ def eval(model, config, eval_rel_types, eval_data,
                 relation_types=eval_rel_types if config.fixed_relation_types else [],
                 top_k=top_k
             )
+            micro_f1, micro_precision, micro_recall = metric_dict['micro_f1'], metric_dict['micro_precision'], metric_dict['micro_recall']
+            macro_f1, macro_precision, macro_recall = metric_dict['macro_f1'], metric_dict['macro_precision'], metric_dict['macro_recall']
+
 
             logger.info(f"Results = {results}")
 
