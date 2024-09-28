@@ -10,7 +10,7 @@ eval_every: 500
 gradient_accumulation: null
 eval_batch_size: 32
 num_layers_freeze: null
-early_stopping_patience: 7
+early_stopping_patience: 10
 early_stopping_delta: 0.0
 
 
@@ -41,7 +41,7 @@ root_dir: ablation_backbone
 train_data: "data/wiki_zsl_all.jsonl"
 
 # "none" if no pretrained model 
-prev_path: "none"
+prev_path: "logs/zero_rel/zero_rel-2024-09-27__16-39-24/model_6000" #"none"
 
 
 # Training Specifics
@@ -51,7 +51,7 @@ num_unseen_rel_types: 15
 top_k: 1                  # number of relations predictions to return at evaluation time
 random_drop: true       # randomly drop relation types
 max_len: 384
-eval_threshold: 0.1
+eval_threshold: 0.2
 max_entity_pair_distance: null
 fixed_relation_types: true  # for eval: only use the given list of relation types (FewRel) for all batches
 # fixed_relation_types: false   # for eval: use all relation types of a given batch (DocRED)
