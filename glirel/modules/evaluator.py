@@ -59,7 +59,15 @@ class RelEvaluator:
         micro_precision, micro_recall, micro_f1, macro_precision, macro_recall, macro_f1 = self.compute_prf(all_true_typed, all_outs_typed).values()
         output_str = f"Micro P: {micro_precision:.2%}\tMicro R: {micro_recall:.2%}\tMicro F1: {micro_f1:.2%}\n"
         output_str += f"Macro P: {macro_precision:.2%}\tMacro R: {macro_recall:.2%}\tMacro F1: {macro_f1:.2%}\n"
-        return output_str, micro_f1, macro_f1
+        metric_dict = {
+            "micro_precision": micro_precision,
+            "micro_recall": micro_recall,
+            "micro_f1": micro_f1,
+            "macro_precision": macro_precision,
+            "macro_recall": macro_recall,
+            "macro_f1": macro_f1,
+        }
+        return output_str, metric_dict
     
     def extract_tp_actual_correct(self, y_true, y_pred):
         # y_pred[0] -> ['work location', (19, 20), (23, 24), 0]

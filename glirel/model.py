@@ -744,11 +744,11 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
                 
 
         evaluator = RelEvaluator(all_trues, all_preds, dataset_name=dataset_name)
-        out, micro_f1, macro_f1 = evaluator.evaluate()
+        out, metric_dict = evaluator.evaluate()
         
         if return_preds:
-            return out, micro_f1, macro_f1, all_preds
-        return out, micro_f1, macro_f1
+            return out, metric_dict, all_preds
+        return out, metric_dict
 
 
     @classmethod
