@@ -53,7 +53,7 @@ def load_model(checkpoint_dir):
 
 def run_inference(test_set, model):
     model.base_config.fixed_relation_types = False
-    results, micro_f1, macro_f1, preds = model.evaluate(
+    results, metric_dict, preds = model.evaluate(
         test_set, 
         flat_ner=True, 
         threshold=model.base_config.eval_threshold, 
@@ -62,6 +62,8 @@ def run_inference(test_set, model):
         top_k=1,
         return_preds=True
     )
+    micro_f1, micro_precision, micro_recall = metric_dict['micro_f1'], metric_dict['micro_precision'], metric_dict['micro_recall']
+    macro_f1, macro_precision, macro_recall = metric_dict['macro_f1'], metric_dict['macro_precision'], metric_dict['macro_recall']
     return preds
 
 def get_gold_coreference_clusters(test_set):
