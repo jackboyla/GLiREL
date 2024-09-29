@@ -41,6 +41,34 @@ python train.py --config configs/config_few_rel.yaml
 
 '''
 
+# If doing hyperparameter sweeping, define sweep config here
+HP_SWEEP_CONFIG = {
+    "metric": {"goal": "maximize", "name": "eval_f1_micro"},
+    "parameters": {
+        "scorer": {"values": ["dot", "dot_norm", "dot_thresh", "concat_proj"]},
+        # "num_train_rel_types": {"values": [15, 20, 25, 30, 35, 40]},
+        # "num_unseen_rel_types": {"values": [15]},
+        # "random_drop": {"values": [True, False]},
+        "lr_encoder": {"values": [1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3]},
+        "lr_others": {"values": [1e-4, 5e-4, 1e-3, 5e-3]},
+        'num_layers_freeze': {"values": [None, 2, 4, 7, 10]},
+        "refine_prompt": {"values": [True, False]},
+        "refine_relation": {"values": [True, False]},
+        "dropout": {"values": [0.3, 0.4, 0.5]},
+        "loss_func": {"values": ["binary_cross_entropy_loss", "focal_loss"]},
+        "alpha": {"values": [0.3, 0.5, 0.75]},  # focal loss only
+        "gamma": {"values": [1, 3, 5]},         # focal loss only
+        # "model_name": {"values": ["microsoft/deberta-v3-large", "microsoft/deberta-v3-small"]},
+    },
+}
+
+EXP_SWEEP_CONFIG = {
+    "metric": {"goal": "maximize", "name": "eval_f1_micro"},
+    "parameters": {
+        'seed': {"values": [12, 42, 123, 1, 5]},
+    },
+}
+
 
 def create_parser():
     parser = argparse.ArgumentParser(description="Zero-shot Relation Extraction")
@@ -51,6 +79,7 @@ def create_parser():
     parser.add_argument("--sweep_id", type=str, default=None, help="WandB Sweep ID")
     parser.add_argument("--sweep_method", type=str, default="grid", help="Sweep method (grid, random, bayes)")
     parser.add_argument("--skip_splitting", action="store_true", help="Skip dataset splitting into train and eval sets")
+    parser.add_argument("--experiment", action="store_true", help="Run an experiment")
     return parser
 
 
@@ -64,7 +93,7 @@ def get_unique_relations(data):
 
 
 
-def split_data_by_relation_type(data, num_unseen_rel_types):
+def split_data_by_relation_type(data, num_unseen_rel_types, seed=None):
     """
     Attempts to split a dataset into training and testing sets based on relation types,
     aiming to have a specified number of unique relation types exclusively in the test set
@@ -93,7 +122,8 @@ def split_data_by_relation_type(data, num_unseen_rel_types):
     start = time.time()
     count = 0
     while not correct_num_unseen_relations_achieved:
-        seed = random.randint(0, 1000)
+        if seed is None:
+            seed = random.randint(0, 1000)
         random.seed(seed)
         random.shuffle(unique_relations)
         test_relation_types = set(unique_relations[ : num_unseen_rel_types ])
@@ -478,6 +508,7 @@ def main(args):
     config = load_config_as_namespace(args.config)
 
     config.log_dir = args.log_dir
+    seed  = getattr(config, 'seed', None)
 
     # set up logging
     if config.log_dir is None:
@@ -565,11 +596,11 @@ def main(args):
                 with open(file_name, 'r') as f:
                     logger.info(f"Generating eval split from {file_name}...")
                     eval_data = [json.loads(line) for line in f]
-                _, eval_data = split_data_by_relation_type(eval_data, config.num_unseen_rel_types)
+                _, eval_data = split_data_by_relation_type(eval_data, config.num_unseen_rel_types, seed=seed)
                 data = sorted(data, key=lambda x: len(x['relations']))
                 train_data = data
             else:
-                train_data, eval_data = split_data_by_relation_type(data, config.num_unseen_rel_types)
+                train_data, eval_data = split_data_by_relation_type(data, config.num_unseen_rel_types, seed=seed)
         else:
             raise ValueError("No eval data provided and config.num_unseen_rel_types is None")
     else:
@@ -639,28 +670,9 @@ if __name__ == "__main__":
 
     if args.wandb_sweep:
 
-        # If doing hyperparameter sweeping, define sweep config here
+        sweep_configuration = HP_SWEEP_CONFIG if not args.run_experiment else EXP_SWEEP_CONFIG
 
-        sweep_configuration = {
-            "method": args.sweep_method, # https://docs.wandb.ai/guides/sweeps/sweep-config-keys#method
-            "metric": {"goal": "maximize", "name": "eval_f1_micro"},
-            "parameters": {
-                "scorer": {"values": ["dot", "dot_norm", "dot_thresh", "concat_proj"]},
-                # "num_train_rel_types": {"values": [15, 20, 25, 30, 35, 40]},
-                # "num_unseen_rel_types": {"values": [15]},
-                # "random_drop": {"values": [True, False]},
-                "lr_encoder": {"values": [1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3]},
-                "lr_others": {"values": [1e-4, 5e-4, 1e-3, 5e-3]},
-                'num_layers_freeze': {"values": [None, 2, 4, 7, 10]},
-                "refine_prompt": {"values": [True, False]},
-                "refine_relation": {"values": [True, False]},
-                "dropout": {"values": [0.3, 0.4, 0.5]},
-                "loss_func": {"values": ["binary_cross_entropy_loss", "focal_loss"]},
-                "alpha": {"values": [0.3, 0.5, 0.75]},  # focal loss only
-                "gamma": {"values": [1, 3, 5]},         # focal loss only
-                # "model_name": {"values": ["microsoft/deberta-v3-large", "microsoft/deberta-v3-small"]},
-            },
-        }
+        sweep_configuration["method"] = args.sweep_method  # https://docs.wandb.ai/guides/sweeps/sweep-config-keys#method
         # get day and time as string
         now = datetime.now()
         dt_string = now.strftime("%d-%m-%Y--%H-%M-%S")
