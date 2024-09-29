@@ -7,10 +7,10 @@ num_steps: 200000
 warmup_ratio: 0.1
 train_batch_size: 1
 eval_every: 3000
-gradient_accumulation: 8   # null
+gradient_accumulation: 8 #null
 eval_batch_size: 32
 num_layers_freeze: null
-early_stopping_patience: 7
+early_stopping_patience: null
 early_stopping_delta: 0.0
 
 # Model Configuration
@@ -33,7 +33,7 @@ gamma: 3
 # Directory Paths
 dataset_name: "zero_rel"
 root_dir: ablation_backbone
-train_data: "data/zero_rel_all.jsonl"
+train_data: "data/zero_rel_all_diff.jsonl"
 
 # "none" if no pretrained model 
 prev_path: "none"
