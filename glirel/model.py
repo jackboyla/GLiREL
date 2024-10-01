@@ -300,8 +300,14 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         all_losses = masked_loss.view(-1, num_classes)
         # expand mask_label to all_losses
         rel_mask = rel_mask.unsqueeze(-1).expand_as(all_losses)
+
         # put lower loss for in label_one_hot (2 for positive, 1 for negative)
-        weight_c = labels_one_hot + 1
+        positive_weight = getattr(self.config.positive_weight, 2.0)  # Weight for true positives
+        negative_weight = getattr(self.config.positive_weight, 1.0)  # Weight for true negatives
+
+        # Assign weights based on the true labels
+        weight_c = labels_one_hot * positive_weight + (1 - labels_one_hot) * negative_weight
+
         # apply mask
         all_losses = all_losses * rel_mask.float() * weight_c
         rel_loss = all_losses.sum()
