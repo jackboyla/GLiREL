@@ -36,6 +36,9 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         self.rel_token = "<<REL>>"
         self.sep_token = "<<SEP>>"
 
+        self.positive_weight = getattr(self.config, 'positive_weight', 2.0)  # weight for positive labels (Default: 2.0)
+        self.negative_weight = getattr(self.config, 'negative_weight', 1.0)  # weight for negative labels (Default: 1.0)
+
         # usually a pretrained bidirectional transformer, returns first subtoken representation
         self.token_rep_layer = TokenRepLayer(model_name=config.model_name, fine_tune=config.fine_tune,
                                              subtoken_pooling=config.subtoken_pooling, hidden_size=config.hidden_size,
@@ -300,13 +303,9 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         all_losses = masked_loss.view(-1, num_classes)
         # expand mask_label to all_losses
         rel_mask = rel_mask.unsqueeze(-1).expand_as(all_losses)
-
-        # put lower loss for in label_one_hot (2 for positive, 1 for negative)
-        positive_weight = getattr(self.config, 'positive_weight', 2.0)  # weight for positive labels (Default: 2.0)
-        negative_weight = getattr(self.config, 'negative_weight', 1.0)  # weight for negative labels (Default: 1.0)
         
         # Assign weights based on the true labels
-        weight_c = labels_one_hot * positive_weight + (1 - labels_one_hot) * negative_weight
+        weight_c = labels_one_hot * self.positive_weight + (1 - labels_one_hot) * self.negative_weight
 
         # apply mask
         all_losses = all_losses * rel_mask.float() * weight_c
