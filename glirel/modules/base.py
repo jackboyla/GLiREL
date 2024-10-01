@@ -12,6 +12,30 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# def old_generate_entity_pairs_indices(span_idx):
+#     num_entities = span_idx.size(0)  # [num_ents, 2]
+
+#     # Expand and tile to create all possible pairs
+#     span_idx_expanded = span_idx.unsqueeze(1).expand(-1, num_entities, -1)  #  ([num_entities, num_entities, 2])
+#     span_idx_tiled = span_idx.unsqueeze(0).expand(num_entities, -1, -1)     #  ([num_entities, num_entities, 2])
+
+#     # we now need a mask to exclude self-pairs
+#     indices = torch.arange(num_entities)
+#     indices_expanded = indices.unsqueeze(1).expand(-1, num_entities)
+#     indices_tiled = indices.unsqueeze(0).expand(num_entities, -1)
+#     # Create a mask to filter out self-pairs
+#     self_pair_mask = indices_expanded != indices_tiled
+
+#     # Apply the mask to filter out self-pairs
+#     span_idx_expanded_filtered = span_idx_expanded[self_pair_mask]  #  ([num_unique_pairs, 2])
+#     span_idx_tiled_filtered = span_idx_tiled[self_pair_mask]        #  ([num_unique_pairs, 2])
+
+
+#     # Stack the pairs back in shape [num_pairs, 2, 2]
+#     combined_pairs = torch.stack((span_idx_expanded_filtered, span_idx_tiled_filtered), dim=1)
+
+#     return combined_pairs  #  ([num_unique_pairs, 2 ->start_index, 2 ->end_index])
+
 
 def generate_entity_pairs_indices(span_idx, max_distance: int | None = None):
     """
@@ -102,10 +126,10 @@ class InstructBase(nn.Module):
             if (head_idx, tail_idx) in rel_label_dict:
                 label = rel_label_dict[(head_idx, tail_idx)]
                 rel_labels.append(label)
-            # elif (tail_idx, head_idx) in rel_label_dict:
-            #     # assign the same label as the reverse relation (if it exists)
-            #     label = rel_label_dict[(head_idx, tail_idx)]
-            #     rel_labels.append(label)
+            elif (tail_idx, head_idx) in rel_label_dict:
+                # assign the same label as the reverse relation (if it exists)
+                label = rel_label_dict[(head_idx, tail_idx)]
+                rel_labels.append(label)
             else:
                 rel_labels.append(0)
 
@@ -219,12 +243,13 @@ class InstructBase(nn.Module):
                 # # add "no relation" to labels
                 # types = [NO_RELATION_STR] + types
 
-                if len(types) < self.base_config.num_train_rel_types:
-                    logger.debug(f"Relation types less than num_train_rel_types: {len(types)} < {self.base_config.num_train_rel_types}")
+                # if len(types) < self.base_config.num_train_rel_types:
+                #     logger.debug(f"Relation types less than num_train_rel_types: {len(types)} < {self.base_config.num_train_rel_types}")
 
 
                 # shuffle (every epoch)
-                random.shuffle(types)
+                if getattr(self.base_config, "shuffle_types", True):
+                    random.shuffle(types)
 
                 # random drop
                 if len(types) != 0 and self.base_config.random_drop:
