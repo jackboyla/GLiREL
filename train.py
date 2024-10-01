@@ -5,6 +5,11 @@ import torch
 import numpy as np
 from tqdm import tqdm
 from transformers import get_cosine_schedule_with_warmup, get_cosine_with_hard_restarts_schedule_with_warmup
+from transformers.trainer import (
+    is_sagemaker_mp_enabled,
+    get_parameter_names,
+    ALL_LAYERNORM_LAYERS,
+)
 
 # from model_nested import NerFilteredSemiCRF
 from glirel import GLiREL
@@ -38,6 +43,8 @@ python train.py --config configs/config_wiki_zsl.yaml --wandb_sweep
 
 python train.py --config configs/config_few_rel.yaml
 
+CUDA_VISIBLE_DEVICES="0" python train.py --config configs/config_few_rel.yaml --wandb_sweep --sweep_method grid --experiment
+
 
 '''
 
@@ -66,6 +73,9 @@ EXP_SWEEP_CONFIG = {
     "metric": {"goal": "maximize", "name": "eval_f1_micro"},
     "parameters": {
         'seed': {"values": [12, 42, 123, 1, 5]},
+        "refine_prompt": {"values": [True, False]},
+        "refine_relation": {"values": [True, False]},
+        "prev_path": {"values": ["none", "logs/zero_rel/zero_rel-2024-09-29__15-01-04/model_123000 copy"]},
     },
 }
 
@@ -470,6 +480,7 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
                     )
                     micro_f1, micro_precision, micro_recall = metric_dict['micro_f1'], metric_dict['micro_precision'], metric_dict['micro_recall']
                     macro_f1, macro_precision, macro_recall = metric_dict['macro_f1'], metric_dict['macro_precision'], metric_dict['macro_recall']
+                    logger.info(f"Best threshold for eval: {metric_dict['best_threshold']}")
 
 
                     if wandb_sweep:
@@ -489,7 +500,7 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
 
                     logger.info(f"Step={step}\n{results}")  
 
-                    early_stopping(metric=micro_f1, model=model, save_path=current_path)
+                    early_stopping(metric=metric_dict[model.threshold_search_metric], model=model, save_path=current_path)
 
             # resume training
             model.train()
@@ -623,6 +634,7 @@ def main(args):
     if config.prev_path != "none":
         model = GLiREL.from_pretrained(config.prev_path)
         model.config = config
+        model.base_config = config
     else:
         model = GLiREL(config)
 
@@ -637,17 +649,71 @@ def main(args):
     model = model.to(device)
     model.device = device
 
-    lr_encoder = float(config.lr_encoder)
-    lr_others = float(config.lr_others)
+    def create_optimizer(opt_model, **optimizer_kwargs):
+        """
+        Setup the optimizer.
 
-    optimizer = torch.optim.AdamW([
-        # encoder
-        {'params': model.token_rep_layer.parameters(), 'lr': lr_encoder},
-        {'params': model.rnn.parameters(), 'lr': lr_others},
-        # projection layers
-        {'params': model.span_rep_layer.parameters(), 'lr': lr_others},
-        {'params': model.prompt_rep_layer.parameters(), 'lr': lr_others},
-    ])
+        We provide a reasonable default that works well. If you want to use something else, you can pass a tuple in the
+        Trainer's init through `optimizers`, or subclass and override this method in a subclass.
+        """
+        decay_parameters = get_parameter_names(opt_model, ALL_LAYERNORM_LAYERS)
+        decay_parameters = [name for name in decay_parameters if "bias" not in name]
+        if config.lr_others is not None:
+            encoder_parameters = [name for name, _ in opt_model.named_parameters() if "token_rep_layer" in name]
+            # encoder_parameters = [name for name, _ in opt_model.token_rep_layer.named_parameters()]
+            optimizer_grouped_parameters = [
+                {
+                    "params": [
+                        p for n, p in opt_model.named_parameters() if (n in decay_parameters and n not in encoder_parameters and p.requires_grad)
+                    ],
+                    "weight_decay": float(config.weight_decay_other),
+                    "lr": float(config.lr_others),
+                },
+                {
+                    "params": [
+                        p for n, p in opt_model.named_parameters() if (n not in decay_parameters and n not in encoder_parameters and p.requires_grad)
+                    ],
+                    "weight_decay": 0.0,
+                    "lr": float(config.lr_others),
+                },
+                {
+                    "params": [
+                        p for n, p in opt_model.named_parameters() if (n in decay_parameters and n in encoder_parameters and p.requires_grad)
+                    ],
+                    "weight_decay": float(config.weight_decay_encoder),
+                    "lr": float(config.lr_encoder),
+                },
+                {
+                    "params": [
+                        p for n, p in opt_model.named_parameters() if (n not in decay_parameters and n in encoder_parameters and p.requires_grad)
+                    ],
+                    "weight_decay": 0.0,
+                    "lr": float(config.lr_encoder),
+                },
+            ]
+        else:
+            optimizer_grouped_parameters = [
+                {
+                    "params": [
+                        p for n, p in opt_model.named_parameters() if (n in decay_parameters and p.requires_grad)
+                    ],
+                    "weight_decay": float(config.weight_decay_encoder),
+                    "lr": float(config.lr_encoder),
+                },
+                {
+                    "params": [
+                        p for n, p in opt_model.named_parameters() if (n not in decay_parameters and p.requires_grad)
+                    ],
+                    "weight_decay": 0.0,
+                    "lr": float(config.lr_encoder),
+                },
+            ]
+
+        optimizer = torch.optim.AdamW(optimizer_grouped_parameters, **optimizer_kwargs)
+
+        return optimizer
+    
+    optimizer = create_optimizer(model)
 
     logger.info(f"Using config: \n{json.dumps(config.__dict__, indent=2)}\n\n")
 
@@ -670,7 +736,7 @@ if __name__ == "__main__":
 
     if args.wandb_sweep:
 
-        sweep_configuration = HP_SWEEP_CONFIG if not args.run_experiment else EXP_SWEEP_CONFIG
+        sweep_configuration = EXP_SWEEP_CONFIG if args.experiment else HP_SWEEP_CONFIG
 
         sweep_configuration["method"] = args.sweep_method  # https://docs.wandb.ai/guides/sweeps/sweep-config-keys#method
         # get day and time as string
