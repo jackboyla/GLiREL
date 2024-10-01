@@ -39,6 +39,8 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         self.positive_weight = getattr(self.config, 'positive_weight', 2.0)  # weight for positive labels (Default: 2.0)
         self.negative_weight = getattr(self.config, 'negative_weight', 1.0)  # weight for negative labels (Default: 1.0)
 
+        self.threshold_search_metric = getattr(self.config, 'threshold_search_metric', 'micro_f1')  # metric to use for threshold search (Default: 'micro_f1')
+
         # usually a pretrained bidirectional transformer, returns first subtoken representation
         self.token_rep_layer = TokenRepLayer(model_name=config.model_name, fine_tune=config.fine_tune,
                                              subtoken_pooling=config.subtoken_pooling, hidden_size=config.hidden_size,
@@ -595,7 +597,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         for thresh, preds in all_preds.items():
             evaluator = RelEvaluator(all_trues[thresh], preds, dataset_name=dataset_name)
             out, metric_dict = evaluator.evaluate()
-            if best_out is None or metric_dict["micro_f1"] > best_metric_dict["micro_f1"]:
+            if best_out is None or metric_dict[self.threshold_search_metric] > best_metric_dict[self.threshold_search_metric]:
                 best_out = out
                 best_metric_dict = metric_dict
                 best_threshold = thresh
