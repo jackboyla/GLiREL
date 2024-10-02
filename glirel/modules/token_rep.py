@@ -11,9 +11,9 @@ from torch.nn.utils.rnn import pad_sequence
 
 
 class TokenRepLayer(nn.Module):
-    def __init__(self, model_name: str = "bert-base-cased", fine_tune: bool = True, subtoken_pooling: str = "first",
-                 hidden_size: int = 768,
-                 add_tokens=["[SEP]", "[REL]"]
+    def __init__(self, model_name: str, fine_tune: bool, subtoken_pooling: str,
+                 hidden_size: int,
+                 add_tokens: List[str]
                  ):
         super().__init__()
 
