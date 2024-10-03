@@ -131,9 +131,9 @@ def split_data_by_relation_type(data, num_unseen_rel_types, seed=None):
     logger.info(f"Running dataset splitting...")
     start = time.time()
     count = 0
-    while not correct_num_unseen_relations_achieved:
-        if seed is None:
-            seed = random.randint(0, 1000)
+    if seed is None:
+        seed = random.randint(0, 1000)
+    while correct_num_unseen_relations_achieved is False:
         random.seed(seed)
         random.shuffle(unique_relations)
         test_relation_types = set(unique_relations[ : num_unseen_rel_types ])
@@ -155,13 +155,13 @@ def split_data_by_relation_type(data, num_unseen_rel_types, seed=None):
                 skipped_items.append(item)
         
         # if we have the right number of eval relations, break
-        if len(get_unique_relations(test_data)) == original_num_unseen_rel_types: 
+        if len(get_unique_relations(test_data)) == original_num_unseen_rel_types and len(skipped_items) < 7500: # NOTE: sometimes the split skips too many items
             correct_num_unseen_relations_achieved = True
         else:
             # bump the number of unseen relations by 1 to cast a wider net
             # if the bump gets too big, reset it
             num_unseen_rel_types = num_unseen_rel_types + 1 if (num_unseen_rel_types <  original_num_unseen_rel_types*2) else num_unseen_rel_types
-        # logger.info('Incorrect number of unseen relation types. Retrying...')
+            seed = random.randint(0, 1000)
 
         count += 1
         if count % 50 == 0:
@@ -305,11 +305,12 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
           wandb_log=False, wandb_sweep=False, warmup_ratio=0.1, train_batch_size=8, device='cuda', use_amp=True):
 
     # EarlyStopping
+    max_saves = config.max_saves if hasattr(config, 'max_saves') else 3
     patience = config.early_stopping_patience if hasattr(config, 'early_stopping_patience') else None
     patience = patience if patience is not None else 100
     delta = config.early_stopping_delta if hasattr(config, 'early_stopping_delta') else 0.0
     delta = delta if delta is not None else 0.0
-    early_stopping = EarlyStopping(patience=patience, delta=delta, max_saves=1)
+    early_stopping = EarlyStopping(patience=patience, delta=delta, max_saves=max_saves)
 
 
     if wandb_log:
@@ -601,8 +602,17 @@ def main(args):
             
         elif config.num_unseen_rel_types is not None:
 
-            if 'zero_rel' in config.dataset_name:
+            if config.dataset_name == 'zero_rel_wiki_zsl':
                 file_name = 'data/wiki_zsl_all.jsonl'
+                config.eval_data = file_name
+                with open(file_name, 'r') as f:
+                    logger.info(f"Generating eval split from {file_name}...")
+                    eval_data = [json.loads(line) for line in f]
+                _, eval_data = split_data_by_relation_type(eval_data, config.num_unseen_rel_types, seed=seed)
+                data = sorted(data, key=lambda x: len(x['relations']))
+                train_data = data
+            if config.dataset_name == 'zero_rel_few_rel':
+                file_name = 'data/few_rel_all.jsonl'
                 config.eval_data = file_name
                 with open(file_name, 'r') as f:
                     logger.info(f"Generating eval split from {file_name}...")
@@ -617,6 +627,28 @@ def main(args):
     else:
         eval_data = eval_data
         train_data = data
+
+    
+    # Load synthetic data
+    if hasattr(config, 'synthetic_data'):
+        logger.info(f"Loading synthetic data from {config.synthetic_data}...")
+        if isinstance(config.synthetic_data, str):
+            config.synthetic_data = [config.synthetic_data]
+
+        synthetic_data = []
+        for synthetic_subset in config.synthetic_data:
+            if synthetic_subset.endswith('.jsonl'):
+                with open(synthetic_subset, 'r') as f:
+                    synthetic_subset = [json.loads(line) for line in f]
+
+            elif synthetic_subset.endswith('.json'):
+                with open(synthetic_subset, 'r') as f:
+                    synthetic_subset = json.load(f)
+            else:
+                raise ValueError(f"Invalid data format: {config.train_data}")
+            synthetic_data.extend(synthetic_subset)
+
+        train_data = train_data + synthetic_data
 
 
     train_rel_types = get_unique_relations(train_data)
