@@ -354,7 +354,8 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
             # If no relations are triggered, return empty lists
             if batch_indices.numel() == 0:
                 rels = [[] for _ in range(len(x["tokens"]))]
-                return rels
+                rels_per_threshold[thresh] = rels
+                continue
             
             # Get scores
             scores = probabilities[batch_indices, pair_indices, rel_type_indices]
@@ -383,7 +384,8 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
             # If no valid indices remain after filtering, return empty predictions
             if len(batch_indices_np) == 0:
                 rels = [[] for _ in range(len(x["tokens"]))]
-                return rels
+                rels_per_threshold[thresh] = rels
+                continue
             
             # Map relation type indices to actual relation type strings
             relation_types = [types_list[i][rel_type_indices_np[idx]] for idx, i in enumerate(batch_indices_np)]
@@ -418,7 +420,8 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
             # If no valid entity pairs remain, return empty predictions
             if len(entity_pairs_list) == 0:
                 rels = [[] for _ in range(len(x["tokens"]))]
-                return rels
+                rels_per_threshold[thresh] = rels
+                continue
             
             # Stack entity pairs
             entity_pairs = torch.stack(entity_pairs_list)
@@ -436,7 +439,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
             rels_per_threshold[thresh] = rels
         
-        return rels_per_threshold if len(threshold) > 1 else rels
+        return rels_per_threshold if len(threshold) > 1 else rels_per_threshold[threshold[0]]
 
 
 
@@ -536,9 +539,11 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         logger.info(f"Number of classes to evaluate with --> {len(relation_types)}")
         data_loader = self.create_dataloader(test_data, batch_size=batch_size, relation_types=relation_types, shuffle=False)
         device = next(self.parameters()).device
+
         threshold = [threshold] if isinstance(threshold, float) else threshold
         all_preds = {thresh: [] for thresh in threshold}
         all_trues = {thresh: [] for thresh in threshold}
+
         with tqdm(total=len(data_loader), desc="Evaluating") as pbar:
             for i, x in enumerate(data_loader):
                 for k, v in x.items():
@@ -604,7 +609,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         best_metric_dict["best_threshold"] = best_threshold
         
         if return_preds:
-            return best_out, best_metric_dict, all_preds[best_threshold]
+            return best_out, best_metric_dict, all_preds
         return best_out, best_metric_dict
 
 
