@@ -118,10 +118,8 @@ class InstructBase(nn.Module):
         super().__init__()
         self.max_width = config.max_width
         self.base_config = config
-        self.COREFERENCE_LABEL = getattr(config, "coreference_label", "SELF")  # NOTE: this label is given a special index to denote coreference (i.e -2)
-        logger.info(f"Coreference label: {self.COREFERENCE_LABEL}")
+        self.base_config.coreference_label = getattr(config, "coreference_label", "SELF")  # NOTE: this label is given a special index to denote coreference (i.e -2)
         self.max_entity_pair_distance = config.max_entity_pair_distance
-        logger.info(f"Max entity pair distance: {self.max_entity_pair_distance}")
 
         self.base_config.entity_start_token, self.base_config.entity_end_token = "[E]", "[/E]"
         if self.base_config.span_marker_mode == 'markerv2':
@@ -196,7 +194,7 @@ class InstructBase(nn.Module):
         
         spans_idx = torch.LongTensor(spans_idx)                     # [num_possible_spans, 2]
         relations_idx = generate_entity_pairs_indices(
-            spans_idx, max_distance=self.max_entity_pair_distance)  # [num_ent_pairs, 2, 2]
+            spans_idx, max_distance=self.base_config.max_entity_pair_distance)  # [num_ent_pairs, 2, 2]
 
         if relations is not None:  # training
             included_relations = []
@@ -248,9 +246,13 @@ class InstructBase(nn.Module):
         class_to_ids = []
         id_to_classes = []
 
-        def _substitute_coref_label(class_to_ids):
+        def _substitute_coref_label(coref_label, class_to_ids):
+            if isinstance(coref_label, str):
+                coref_label = [coref_label.lower()]
+            else:
+                coref_label = [l.lower() for l in coref_label]
             for key in class_to_ids.keys():
-                if key.lower() == self.COREFERENCE_LABEL.lower():
+                if key.lower() in coref_label:
                     class_to_ids[key] = class_to_ids[key] * -50
 
             return class_to_ids
@@ -300,7 +302,7 @@ class InstructBase(nn.Module):
                     types = sorted(b["label"])
 
                 class_to_id = {k: v for v, k in enumerate(types, start=1)}
-                class_to_id = _substitute_coref_label(class_to_id)
+                class_to_id = _substitute_coref_label(self.base_config.coreference_label, class_to_id)
                 id_to_class = {k: v for v, k in class_to_id.items()}
                 class_to_ids.append(class_to_id)
                 id_to_classes.append(id_to_class)
@@ -315,7 +317,7 @@ class InstructBase(nn.Module):
             if (self.base_config.fixed_relation_types is True):
                 # relation labels are fixed across all batches, e.g for evaluating m=15, etc
                 class_to_id = {k: v for v, k in enumerate(relation_types, start=1)}
-                # class_to_id = _substitute_coref_label(class_to_id)  # NOTE: change COREFERENCE LABEL TO -2
+                # class_to_id = _substitute_coref_label(self.base_config.coreference_label, class_to_id)  # NOTE: change COREFERENCE LABEL TO -2
                 id_to_class = {k: v for v, k in class_to_id.items()}
                 class_to_ids = [class_to_id] * len(batch_list)
                 id_to_classes = [id_to_class] * len(batch_list)
@@ -329,7 +331,7 @@ class InstructBase(nn.Module):
                         # provided batch of label lists in the wild
                         instance_relation_types = list(set([r for r in relation_types[i]]))
                     class_to_id = {k: v for v, k in enumerate(instance_relation_types, start=1)}
-                    # class_to_id = _substitute_coref_label(class_to_id)  # NOTE: change COREFERENCE LABEL TO -2
+                    # class_to_id = _substitute_coref_label(self.base_config.coreference_label, class_to_id)  # NOTE: change COREFERENCE LABEL TO -2
                     id_to_class = {k: v for v, k in class_to_id.items()}
                     class_to_ids.append(class_to_id)
                     id_to_classes.append(id_to_class)
