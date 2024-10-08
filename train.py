@@ -28,6 +28,7 @@ import gc
 import sys
 sys.path.append('data/re-docred')
 from run_evaluation import run_evaluation
+from redocred_experiment_params import REDOCRED_EXP_SWEEP_CONFIG
 
 
 logger = logging.getLogger(__name__)
@@ -43,7 +44,7 @@ python train.py --config configs/config_wiki_zsl.yaml --wandb_sweep
 
 python train.py --config configs/config_few_rel.yaml
 
-CUDA_VISIBLE_DEVICES="0" python train.py --config configs/config_few_rel.yaml --wandb_sweep --sweep_method grid --experiment
+CUDA_VISIBLE_DEVICES="2" python train.py --config configs/config_few_rel.yaml --wandb_sweep --sweep_method grid --experiment
 
 
 '''
@@ -72,7 +73,7 @@ HP_SWEEP_CONFIG = {
 EXP_SWEEP_CONFIG = {
     "metric": {"goal": "maximize", "name": "eval_f1_macro"},
     "parameters": {
-        'seed': {"values": [12, 42, 123, 619, 999]},  # , 1, 5, 619, 999, 111, 777
+        'seed': {"values": [1, 5, 619, 999, 111, 777]},  # , 
         # "refine_prompt": {"values": [False, True]},
         # "refine_relation": {"values": [False, True]},
         # "span_marker_mode": {"values": ["markerv1", "markerv2"]},
@@ -794,11 +795,19 @@ if __name__ == "__main__":
     parser = create_parser()
     args = parser.parse_args()
 
+    config = load_config_as_namespace(args.config)
+
     assert not (args.wandb_log is True and args.wandb_sweep is True), "Cannot use both wandb logging and wandb sweep at the same time."
 
     if args.wandb_sweep:
 
-        sweep_configuration = EXP_SWEEP_CONFIG if args.experiment else HP_SWEEP_CONFIG
+        if args.experiment:
+            if config.dataset_name.lower() == 'redocred':
+                sweep_configuration = REDOCRED_EXP_SWEEP_CONFIG
+            else:
+                sweep_configuration = EXP_SWEEP_CONFIG
+        else:
+            sweep_configuration = HP_SWEEP_CONFIG
 
         sweep_configuration["method"] = args.sweep_method  # https://docs.wandb.ai/guides/sweeps/sweep-config-keys#method
         # get day and time as string
