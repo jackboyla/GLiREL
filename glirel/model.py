@@ -33,8 +33,11 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         self.config = config
 
         # [REL] token
-        self.rel_token = "<<REL>>"
-        self.sep_token = "<<SEP>>"
+        self.rel_token = "[REL]"
+        self.sep_token = "[SEP]"
+
+        label_embed_strategies = ['ent_token', 'label', 'both']
+        assert self.config.label_embed_strategy in label_embed_strategies, f"Invalid label_embed_strategy: {self.config.label_embed_strategy}. Must be one of {label_embed_strategies}"
 
         self.positive_weight = getattr(self.config, 'positive_weight', 2.0)  # weight for positive labels (Default: 2.0)
         self.negative_weight = getattr(self.config, 'negative_weight', 1.0)  # weight for negative labels (Default: 1.0)
@@ -42,9 +45,10 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         self.threshold_search_metric = getattr(self.config, 'threshold_search_metric', 'micro_f1')  # metric to use for threshold search (Default: 'micro_f1')
 
         # usually a pretrained bidirectional transformer, returns first subtoken representation
+        add_tokens = [self.rel_token, self.sep_token, self.base_config.entity_start_token, self.base_config.entity_end_token]
         self.token_rep_layer = TokenRepLayer(model_name=config.model_name, fine_tune=config.fine_tune,
                                              subtoken_pooling=config.subtoken_pooling, hidden_size=config.hidden_size,
-                                             add_tokens=[self.rel_token, self.sep_token])
+                                             add_tokens=add_tokens)
 
         # hierarchical representation of tokens (zaratiana et al, 2022)
         # https://arxiv.org/pdf/2203.14710.pdf
@@ -57,7 +61,8 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
 
         self.span_rep_layer = RelRepLayer(
-            rel_mode=config.span_mode,
+            rel_mode=config.rel_mode,
+            span_mode=config.span_marker_mode,
             hidden_size=config.hidden_size,
             max_width=config.max_width,
             dropout=config.dropout,
@@ -180,10 +185,10 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         word_rep_w_prompt = bert_output["embeddings"]  # embeddings for all tokens (with prompt)
         mask_w_prompt = bert_output["mask"]  # mask for all tokens (with prompt)
 
-        # get word representation (after [SEP]), mask (after [SEP]) and entity type representation (before [SEP])
+        # get word representation (after [SEP]), mask (after [SEP]) and relation type representation (before [SEP])
         word_rep = []      # word representation (after [SEP])
         mask = []          # mask (after [SEP])
-        rel_type_rep = []  # entity type representation (before [SEP])
+        rel_type_rep = []  # relation type representation (before [SEP])
         for i in range(len(x['tokens'])):
             prompt_entity_length = all_len_prompt[i]  # length of prompt for this example
             # get word representation (after [SEP])
@@ -193,7 +198,15 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
             # get entity type representation (before [SEP])
             relation_rep = word_rep_w_prompt[i, :prompt_entity_length - 1]  # remove [SEP]
-            relation_rep = relation_rep[0::2]  # it means that we take every second element starting from the second one
+            if self.config.label_embed_strategy == 'ent_token':
+                # Only use class token ([REL]) embeddings (every second element starting from 0)
+                relation_rep = relation_rep[0::2]
+            elif self.config.label_embed_strategy == 'label':
+                # Only use label embeddings (every second element starting from 1)
+                relation_rep = relation_rep[1::2]
+            elif self.config.label_embed_strategy == 'both':
+                # Interleave [REL] tokens and label embeddings
+                relation_rep = relation_rep.reshape(-1, 2, relation_rep.shape[-1]).mean(dim=1)  # Take the mean of each [REL] and label embedding pair
             rel_type_rep.append(relation_rep)
 
         # padding for word_rep, mask and rel_type_rep
