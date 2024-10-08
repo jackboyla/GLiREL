@@ -35,7 +35,7 @@ loss_func: "binary_cross_entropy_loss"  # "binary_cross_entropy_loss"  # "focal_
 alpha: 0.75
 gamma: 3
 # add_entity_markers: true
-label_embed_strategy: "label"  # "ent_token" "both"
+label_embed_strategy: "both"  # "label" "ent_token" "both"
 
 
 # Coreference Resolution
