@@ -1,9 +1,11 @@
 # Learning Rate
 lr_encoder: 1e-5
-lr_others: 5e-4
+lr_others: 1e-4
+weight_decay_encoder: 0.01
+weight_decay_other: 0.01
 
 # Training Parameters
-num_steps: 200000
+num_steps: 100000
 warmup_ratio: 0.1
 train_batch_size: 1
 eval_every: 3000
@@ -12,28 +14,38 @@ eval_batch_size: 32
 num_layers_freeze: null
 early_stopping_patience: null
 early_stopping_delta: 0.0
+save_at: [200, 6000, 12000, 20000, 70000]
+max_saves: 6
 
 # Model Configuration
 max_width: 12
-model_name: microsoft/deberta-v3-large # hugging face model
+model_name: microsoft/deberta-v3-large
 fine_tune: true
 subtoken_pooling: first
-hidden_size: 1024
+hidden_size: 768
 scorer: "dot" # "dot_norm" # "dot"
-span_mode: marker
+rel_mode: marker
+span_marker_mode: markerv1
 refine_prompt: false
 refine_relation: false
 ffn_mul: 4
 dropout: 0.4
 scheduler: "cosine_with_warmup"  # "cosine_with_hard_restarts"
-loss_func: "focal_loss" # "binary_cross_entropy_loss"  # "focal_loss"
-alpha: 0.3
+loss_func: "binary_cross_entropy_loss" # "binary_cross_entropy_loss"  # "focal_loss"
+alpha: 0.6
 gamma: 3
+# add_entity_markers: true
+label_embed_strategy: "both"  # "label" "ent_token" "both"
+
+
+# Coreference Resolution
+coref_classifier: false
+coref_loss_weight: 10.0
 
 # Directory Paths
 dataset_name: "zero_rel"
 root_dir: ablation_backbone
-train_data: "data/zero_rel_all_diff.jsonl"
+train_data: "data/zero_rel_all.jsonl"
 
 # "none" if no pretrained model 
 prev_path: "none"
@@ -41,15 +53,15 @@ prev_path: "none"
 
 # Training Specifics
 size_sup: -1
-num_train_rel_types: 30   # number of relation labels to use in each given mini-batch
+num_train_rel_types: 25   # number of relation labels to use in each given mini-batch
 num_unseen_rel_types: 15   # 15
 top_k: 1                  # number of relations predictions to return at evaluation time
 random_drop: true       # randomly drop relation types
-max_len: 384
-eval_threshold: 0.01
+max_len: 512
+eval_threshold: [0.01, 0.1, 0.2, 0.3, 0.5]
 max_entity_pair_distance: null
-# fixed_relation_types: true  # for eval: only use the given list of relation types (FewRel) for all batches
-fixed_relation_types: false   # for eval: use all relation types of a given batch (DocRED)
+fixed_relation_types: true  # for eval: only use the given list of relation types (FewRel) for all batches
+# fixed_relation_types: false   # for eval: use all relation types of a given batch (DocRED)
 
 
 name: "large"
