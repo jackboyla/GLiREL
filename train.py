@@ -50,7 +50,7 @@ CUDA_VISIBLE_DEVICES="0" python train.py --config configs/config_few_rel.yaml --
 
 # If doing hyperparameter sweeping, define sweep config here
 HP_SWEEP_CONFIG = {
-    "metric": {"goal": "maximize", "name": "eval_f1_micro"},
+    "metric": {"goal": "maximize", "name": "eval_f1_macro"},
     "parameters": {
         "scorer": {"values": ["dot", "dot_norm", "dot_thresh", "concat_proj"]},
         # "num_train_rel_types": {"values": [15, 20, 25, 30, 35, 40]},
@@ -70,12 +70,16 @@ HP_SWEEP_CONFIG = {
 }
 
 EXP_SWEEP_CONFIG = {
-    "metric": {"goal": "maximize", "name": "eval_f1_micro"},
+    "metric": {"goal": "maximize", "name": "eval_f1_macro"},
     "parameters": {
-        'seed': {"values": [12, 42, 123, 1, 5]},
-        "refine_prompt": {"values": [True, False]},
-        "refine_relation": {"values": [True, False]},
-        "prev_path": {"values": ["none", "logs/zero_rel/zero_rel-2024-09-29__15-01-04/model_123000 copy"]},
+        'seed': {"values": [12, 42, 123, 619, 999]},  # , 1, 5, 619, 999, 111, 777
+        # "refine_prompt": {"values": [False, True]},
+        # "refine_relation": {"values": [False, True]},
+        # "span_marker_mode": {"values": ["markerv1", "markerv2"]},
+        # "add_entity_markers": {"values": [False, True]},
+        # "label_embed_strategy": {"values": ["label"]},
+        "num_unseen_rel_types": {"values": [15, 10, 5]},
+        "prev_path": {"values": ["logs/zero_rel/zero_rel-2024-10-06__21-28-09/saved_at/model_70000", "none"]},
     },
 }
 
@@ -155,7 +159,7 @@ def split_data_by_relation_type(data, num_unseen_rel_types, seed=None):
                 skipped_items.append(item)
         
         # if we have the right number of eval relations, break
-        if len(get_unique_relations(test_data)) == original_num_unseen_rel_types and len(skipped_items) < 7500: # NOTE: sometimes the split skips too many items
+        if len(get_unique_relations(test_data)) == original_num_unseen_rel_types:
             correct_num_unseen_relations_achieved = True
         else:
             # bump the number of unseen relations by 1 to cast a wider net
@@ -421,6 +425,13 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
 
         description = f"step: {step} | epoch: {step // len(train_loader)} | loss: {loss.item():.2f}"
 
+
+        if hasattr(config, 'save_at') and (step+1) in config.save_at:
+            logger.info(f"Saving model at step {step+1}")
+            current_path = os.path.join(log_dir, f'saved_at/model_{step + 1}')
+
+            model.save_pretrained(current_path)
+
         if run is not None:
             run.log({
                 "loss": loss.item(), 
@@ -458,6 +469,8 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
             elif eval_data is not None:
                 with torch.no_grad():
 
+
+
                     # (Re-)DocRED-specific testing
                     if config.dataset_name.lower() == 'redocred':
                         logger.info("Running testing...")
@@ -466,6 +479,7 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
                             use_auxiliary_coref=False, model=model)
                         logger.info(f"Test F1: {test_best_f1} | Test F1 Ignore: {test_best_f1_ign} | Test P: {test_best_p} | Test R: {test_best_r}")
                     #######
+
 
                     logger.info('Evaluating...')
                     logger.info(f'Taking top k = {top_k} predictions for each relation...')
@@ -602,7 +616,7 @@ def main(args):
             
         elif config.num_unseen_rel_types is not None:
 
-            if config.dataset_name == 'zero_rel_wiki_zsl':
+            if config.dataset_name in ['zero_rel_wiki_zsl', 'zero_rel']:
                 file_name = 'data/wiki_zsl_all.jsonl'
                 config.eval_data = file_name
                 with open(file_name, 'r') as f:
@@ -611,7 +625,7 @@ def main(args):
                 _, eval_data = split_data_by_relation_type(eval_data, config.num_unseen_rel_types, seed=seed)
                 data = sorted(data, key=lambda x: len(x['relations']))
                 train_data = data
-            if config.dataset_name == 'zero_rel_few_rel':
+            elif config.dataset_name == 'zero_rel_few_rel':
                 file_name = 'data/few_rel_all.jsonl'
                 config.eval_data = file_name
                 with open(file_name, 'r') as f:
@@ -630,7 +644,7 @@ def main(args):
 
     
     # Load synthetic data
-    if hasattr(config, 'synthetic_data'):
+    if hasattr(config, 'synthetic_data') and config.synthetic_data is not None:
         logger.info(f"Loading synthetic data from {config.synthetic_data}...")
         if isinstance(config.synthetic_data, str):
             config.synthetic_data = [config.synthetic_data]
@@ -749,6 +763,22 @@ def main(args):
 
     logger.info(f"Using config: \n{json.dumps(config.__dict__, indent=2)}\n\n")
 
+    
+    logger.info(f"Checking for duplicate spans and/or relations...")
+    for d in [train_data, eval_data]:
+        if d:
+            for i, item in enumerate(d):
+                relation_pos = set()
+                for r in item['relations']:
+                    position_tuple = (tuple(r['head']['position']), tuple(r['tail']['position']))
+                    assert position_tuple not in relation_pos, f"Duplicate position for relation in (idx {i}) Relation --> {r}"
+                    relation_pos.add(position_tuple)
+
+                span_set = set()
+                for span in item['ner']:
+                    span_pos = (span[0], span[1])
+                    assert span_pos not in span_set, f"Duplicate span in (idx {i}) Span --> {span}"
+                    span_set.add(span_pos)
 
     try:
         train(model, optimizer, train_data=train_data, config=config, train_rel_types=train_rel_types, eval_rel_types=eval_rel_types, eval_data=eval_data,
