@@ -8,34 +8,57 @@ from torch.utils.data import DataLoader
 import random
 import os
 import logging
+from copy import copy, deepcopy
 
 
 logger = logging.getLogger(__name__)
 
-# def old_generate_entity_pairs_indices(span_idx):
-#     num_entities = span_idx.size(0)  # [num_ents, 2]
+def insert_entity_markers(tokens, span_idx, relations, entity_start_token, entity_end_token):
+    """
+    tokens: List[str] - tokenized input sequence
+    span_idx: List[Tuple[int, int]] - list of (start_idx, end_idx) for entities
+    relations: List[Dict] - list of relation dictionaries
+    entity_start_token: str - entity start token
+    entity_end_token: str - entity end token
 
-#     # Expand and tile to create all possible pairs
-#     span_idx_expanded = span_idx.unsqueeze(1).expand(-1, num_entities, -1)  #  ([num_entities, num_entities, 2])
-#     span_idx_tiled = span_idx.unsqueeze(0).expand(num_entities, -1, -1)     #  ([num_entities, num_entities, 2])
+    ['<e>', 'John', 'Doe', '</e>', 'is', 'a', 'software', 'engineer', 'at', '<e>', 'Google', '</e>', 'in', '<e>', 'Dublin', '</e>', '.']
+    """
+    if entity_start_token in tokens or entity_end_token in tokens:
+        # logger.warning(f"Entity markers already present in tokens. Skipping insertion.")
+        return tokens, span_idx, relations
+    prev_tokens = copy(tokens)
+    prev_relations = deepcopy(relations)
+    offset = 0
+    adjusted_span_idx = []
+    span2adjusted_span = {}
+    for start, end in sorted(span_idx, key=lambda x: x[0]):
+        adjusted_start = start + offset
+        tokens.insert(start + offset, entity_start_token)
+        offset += 1
+        tokens.insert(end + offset + 1, entity_end_token)
+        offset += 1
+        adjusted_end = end + offset
+        adjusted_span_idx.append((adjusted_start, adjusted_end))
+        span2adjusted_span[(start, end)] = (adjusted_start, adjusted_end)
 
-#     # we now need a mask to exclude self-pairs
-#     indices = torch.arange(num_entities)
-#     indices_expanded = indices.unsqueeze(1).expand(-1, num_entities)
-#     indices_tiled = indices.unsqueeze(0).expand(num_entities, -1)
-#     # Create a mask to filter out self-pairs
-#     self_pair_mask = indices_expanded != indices_tiled
-
-#     # Apply the mask to filter out self-pairs
-#     span_idx_expanded_filtered = span_idx_expanded[self_pair_mask]  #  ([num_unique_pairs, 2])
-#     span_idx_tiled_filtered = span_idx_tiled[self_pair_mask]        #  ([num_unique_pairs, 2])
-
-
-#     # Stack the pairs back in shape [num_pairs, 2, 2]
-#     combined_pairs = torch.stack((span_idx_expanded_filtered, span_idx_tiled_filtered), dim=1)
-
-#     return combined_pairs  #  ([num_unique_pairs, 2 ->start_index, 2 ->end_index])
-
+    adjusted_relations = []
+    for rel in relations:
+        head_idx = tuple(rel['head']['position'])
+        tail_idx = tuple(rel['tail']['position'])
+        try:
+            adjusted_head_idx = span2adjusted_span[head_idx]
+        except:
+            import ipdb; ipdb.set_trace()
+        try:
+            adjusted_tail_idx = span2adjusted_span[tail_idx]
+        except:
+            import ipdb; ipdb.set_trace()
+        rel['head']['position'] = list(adjusted_head_idx)
+        rel['tail']['position'] = list(adjusted_tail_idx)
+        adjusted_relations.append(rel)
+    
+    adjusted_relations = sorted(adjusted_relations, key=lambda x: x['head']['position'][0])
+    return tokens, adjusted_span_idx, adjusted_relations
 
 def generate_entity_pairs_indices(span_idx, max_distance: int | None = None):
     """
@@ -100,6 +123,10 @@ class InstructBase(nn.Module):
         self.max_entity_pair_distance = config.max_entity_pair_distance
         logger.info(f"Max entity pair distance: {self.max_entity_pair_distance}")
 
+        self.base_config.entity_start_token, self.base_config.entity_end_token = "[E]", "[/E]"
+        if self.base_config.span_marker_mode == 'markerv2':
+            logger.info(f"Using SpanMarkerV2. Adding entity markers: {self.base_config.entity_start_token}, {self.base_config.entity_end_token}")
+
     def get_dict(self, spans, classes_to_id):
         dict_tag = defaultdict(int)
         for span in spans:
@@ -153,6 +180,13 @@ class InstructBase(nn.Module):
         for ner_span in ner:
             start, end = ner_span[0], ner_span[1]
             spans_idx.append((start, end))
+
+        if hasattr(self.base_config, "add_entity_markers") and self.base_config.add_entity_markers:
+            tokens, spans_idx, relations = insert_entity_markers(
+                tokens, spans_idx, relations, 
+                self.base_config.entity_start_token, self.base_config.entity_end_token
+            )
+            seq_length = len(tokens)
 
         # MAX_SPANS = 35     # NOTE: max number of span pairs -- can be increased with more VRAM
         # if len(spans_idx) > MAX_SPANS:
@@ -223,6 +257,8 @@ class InstructBase(nn.Module):
 
         # batch_list: list of dict containing tokens, ner
         if relation_types is None:
+            # training
+            self.processing_mode = "training"
             assert train_relation_types is not None, "`train_relation_types` must be provided for relation extraction data loader"
             negs = self.get_negatives_rel(train_relation_types, 100)
             for b in batch_list:
@@ -275,6 +311,7 @@ class InstructBase(nn.Module):
 
         else:
             # evaluation
+            self.processing_mode = "evaluation"
             if (self.base_config.fixed_relation_types is True):
                 # relation labels are fixed across all batches, e.g for evaluating m=15, etc
                 class_to_id = {k: v for v, k in enumerate(relation_types, start=1)}
