@@ -37,6 +37,10 @@ id2rel['P9'] = ["sibling", "the subject and the object have at least one common 
 id2rel = {key: value[0] for key, value in id2rel.items()}
 rel2id = {value: key for key, value in id2rel.items()}
 
+duplicate_entities = []
+duplicate_relations = []
+overlapping_entities = []
+
 def map_entities(doc):
     # Create a mapping for the entities
     entity_mapping = {}
@@ -54,9 +58,8 @@ def map_entities(doc):
     return entity_mapping
 
 
-def expand_labels(doc):
+def expand_labels(doc, idx):
     expanded_labels = []
-    labels = doc['labels']
     
     # Function to get cumulative position of an entity mention
     def get_cumulative_position(mention, cumulative_sentence_lengths):
@@ -67,9 +70,39 @@ def expand_labels(doc):
     cumulative_sentence_lengths = [0]
     for sentence in doc['sents']:
         cumulative_sentence_lengths.append(cumulative_sentence_lengths[-1] + len(sentence))
+
+   # Add SELF relations for mentions within the same entity cluster
+    for cluster_idx, entity_mentions in enumerate(doc['vertexSet']):
+
+        for i, head_mention in enumerate(entity_mentions):
+            head_start_index, head_end_index = get_cumulative_position(head_mention, cumulative_sentence_lengths)
+
+            for j, tail_mention in enumerate(entity_mentions):
+                if i != j:  # Skip self-relation for the same mention
+                    tail_start_index, tail_end_index = get_cumulative_position(tail_mention, cumulative_sentence_lengths)
+                    
+                    # Construct the SELF relation
+                    self_relation = {
+                        'head': {
+                            'name': head_mention['name'],
+                            'position': [head_start_index, head_end_index],
+                            'type': head_mention['type'],
+                            'h_idx': cluster_idx
+                        },
+                        'tail': {
+                            'name': tail_mention['name'],
+                            'position': [tail_start_index, tail_end_index],
+                            'type': tail_mention['type'],
+                            't_idx': cluster_idx
+                        },
+                        'relation_id': 'SELF',
+                        'relation_text': 'SELF',
+                        'evidence': None  # no specific evidence for SELF relations
+                    }
+                    expanded_labels.append(self_relation)
     
     # Iterate over the relations in the labels
-    for i, relation in enumerate(labels):
+    for i, relation in enumerate(doc['labels']):
 
         head_id, tail_id, relation_id, evidence = relation['h'], relation['t'], relation['r'], relation['evidence']
         relation_text = id2rel[relation_id]
@@ -102,45 +135,29 @@ def expand_labels(doc):
                 }
                 expanded_labels.append(expanded_relation)
 
-
-    # Add SELF relations for mentions within the same entity cluster
-    for cluster_idx, entity_mentions in enumerate(doc['vertexSet']):
-
-        for i, head_mention in enumerate(entity_mentions):
-            head_start_index, head_end_index = get_cumulative_position(head_mention, cumulative_sentence_lengths)
-
-            for j, tail_mention in enumerate(entity_mentions):
-                if i != j:  # Skip self-relation for the same mention
-                    tail_start_index, tail_end_index = get_cumulative_position(tail_mention, cumulative_sentence_lengths)
-                    
-                    # Construct the SELF relation
-                    self_relation = {
-                        'head': {
-                            'name': head_mention['name'],
-                            'position': [head_start_index, head_end_index],
-                            'type': head_mention['type'],
-                            'h_idx': cluster_idx
-                        },
-                        'tail': {
-                            'name': tail_mention['name'],
-                            'position': [tail_start_index, tail_end_index],
-                            'type': tail_mention['type'],
-                            't_idx': cluster_idx
-                        },
-                        'relation_id': 'SELF',
-                        'relation_text': 'SELF',
-                        'evidence': None  # no specific evidence for SELF relations
-                    }
-                    expanded_labels.append(self_relation)
     
+    # De-duplicate relations
+    expanded_labels = sorted(expanded_labels, key=lambda x: (x['head']['name'], x['head']['position'][0], x['tail']['position'][0]))
+    relation_pos = {}
+    de_duplicated_expanded_labels = []
+    for r in expanded_labels:
+        position_tuple = (tuple(r['head']['position']), tuple(r['tail']['position']))
+        if position_tuple in relation_pos: 
+            print(f"Duplicate position for relation in (idx {idx}) Relation {r} \n--already as-->\n {relation_pos[position_tuple]}\n")
+            duplicate_relations.append(r)
+        else:
+            de_duplicated_expanded_labels.append(r)
+            relation_pos[position_tuple] = r
+    
+    expanded_labels = de_duplicated_expanded_labels
 
     # sort for viewing
     expanded_labels = sorted(expanded_labels, key=lambda x: (x['head']['name'], x['head']['position'][0], x['tail']['position'][0]))
     return expanded_labels
 
 
-def get_ner_from_entity_mapping(entity_mapping, doc):
-    ner = []
+def get_ner_from_entity_mapping(entity_mapping, doc, idx):
+    ner_entries = []
     position2clusterid = []
     cumulative_offset = 0  
     for k, mention in entity_mapping.items():
@@ -149,12 +166,46 @@ def get_ner_from_entity_mapping(entity_mapping, doc):
         # Adjust the entity's position with the cumulative offset
         start = cumulative_offset + mention['pos'][0]
         end = cumulative_offset + mention['pos'][1]
-        ner.append([start, end, mention['type'], mention['name']])
+        ner_entries.append([start, end, mention['type'], mention['name']])
 
         position2clusterid.append([[start, end], k[0]])
 
-    ner = sorted(ner, key=lambda x: x[0])
-    return ner, position2clusterid
+    # De-duplicate NER entries
+    unique_texts = set([text for _, _, _, text in ner_entries])
+    unique_positions = set([(start, end) for start, end, _, _ in ner_entries])
+    de_duplicated_ner = []
+    for start, end, type, text in ner_entries:
+        if (start, end) in unique_positions:
+            unique_positions.remove((start, end))
+            de_duplicated_ner.append([start, end, type, text])
+        else:
+            print(f"Duplicate entity for idx {idx}: {start, end, type, text}")  # NOTE: seems to be all DATEs that cause this problem
+            duplicate_entities.append((start, end))
+
+    ner_entries = de_duplicated_ner
+
+    # Assert that no NER indices overlap with each other
+    non_overlapping_ner = []
+    removed_span2preferred_span = {}
+    for i, (start1, end1, type1, text1) in enumerate(ner_entries):
+        keep = True
+        for j, (start2, end2, type2, text2) in enumerate(ner_entries):
+            if i != j:
+                if not (end1 < start2 or end2 < start1):  # There is an overlap
+                    overlapping_entities.append((start1, end1, type1, text1))
+                    if len(text1) < len(text2):
+                        print(f"Removing {text1} in favor of {text2} due to overlap (idx {idx})")
+                        keep = False
+                        removed_span2preferred_span[(start1, end1)] = (start2, end2)
+                        break
+
+        if keep:
+            non_overlapping_ner.append((start1, end1, type1, text1))
+
+    ner_entries = non_overlapping_ner
+
+    ner_entries = sorted(ner_entries, key=lambda x: x[0])
+    return ner_entries, position2clusterid
 
 
 def assert_ner_aligns_with_text(ner, tokenized_text, i):
@@ -181,10 +232,10 @@ for SPLIT in ['train', 'dev', 'test']: # train_distant
 
         entity_mapping = map_entities(doc)
 
-        example_row['ner'], position2clusterid = get_ner_from_entity_mapping(entity_mapping, doc)  #  "ner": [[3,6,"LOC"], [7,9,"PER"]]
+        example_row['ner'], position2clusterid = get_ner_from_entity_mapping(entity_mapping, doc, i)  #  "ner": [[3,6,"LOC"], [7,9,"PER"]]
         example_row['position2clusterid'] = position2clusterid
         # assert_ner_aligns_with_text(example_row['ner'], example_row['tokenized_text'], i)
-        example_row['relations'] = expand_labels(doc)
+        example_row['relations'] = expand_labels(doc, i)
 
         data.append(example_row)
 
@@ -209,6 +260,10 @@ for SPLIT in ['train', 'dev', 'test']: # train_distant
     # are all title keys unique?
     assert len(data) == len(set([doc['title'] for doc in data]))
     print(f"All unique titles")
+
+    print(f"Duplicate entities: {len(duplicate_entities)}")
+    print(f"Overlapping entities: {len(overlapping_entities)}")
+    print(f"Duplicate relations: {len(duplicate_relations)}")
 
     # save to a jsonl file
     with open(f'redocred_{SPLIT}.jsonl', 'w') as f:
