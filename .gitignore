@@ -173,5 +173,5 @@ poetry.toml
 pyrightconfig.json
 
 logs
-wandb
+*wandb*
 train_distant.json
