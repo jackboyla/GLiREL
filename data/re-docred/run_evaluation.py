@@ -64,7 +64,7 @@ def run_inference(test_set, model):
     )
     micro_f1, micro_precision, micro_recall = metric_dict['micro_f1'], metric_dict['micro_precision'], metric_dict['micro_recall']
     macro_f1, macro_precision, macro_recall = metric_dict['macro_f1'], metric_dict['macro_precision'], metric_dict['macro_recall']
-    return preds
+    return preds, metric_dict
 
 def get_gold_coreference_clusters(test_set):
     entity_to_cluster_idx_list = []
@@ -116,7 +116,8 @@ def run_evaluation(ckpt_dir, use_gold_coref=False, use_auxiliary_coref=False, mo
     # Run inference on the test set
     if not os.path.exists('data/re-docred/res'):
         os.makedirs('data/re-docred/res')
-    preds = run_inference(test_set, model)
+    preds, metric_dict = run_inference(test_set, model)
+    preds = preds[metric_dict['best_threshold']]
     with open(INTERMEDIATE_RESULTS_PATH, 'w') as f:
         json.dump(preds, f)
     print(f"Inference done! Results saved to {INTERMEDIATE_RESULTS_PATH}")
@@ -134,18 +135,9 @@ def run_evaluation(ckpt_dir, use_gold_coref=False, use_auxiliary_coref=False, mo
 
     # entity_to_cluster_idx_list --> (128, 129): 0, (33, 34): 0, (144, 145): 0, (0, 6): 0, ...
 
-    
-    try:
-        # propagate labels using coreference clusters
-        cluster_relations_list = utils.aggregate_cluster_relations(entity_to_cluster_idx, preds)
-    except Exception as e:
-        problems = []
-        for i, b in enumerate(preds):
-            for j, p in enumerate(b):
-                if p['head']['position'] == [-1,-1] or p['tail']['position'] == [-1,-1]:
-                    problems.append((i, j, p))
 
-        print(f"Error: {e}")
+    # propagate labels using coreference clusters
+    cluster_relations_list = utils.aggregate_cluster_relations(entity_to_cluster_idx, preds)
 
     
     # [ [{'h_idx': 0, 't_idx': 2, 'r': 'performer'}, ...], ...]
@@ -251,6 +243,8 @@ def run_evaluation(ckpt_dir, use_gold_coref=False, use_auxiliary_coref=False, mo
     if log_file:
         sys.stdout.close()
         sys.stdout = sys.__stdout__
+
+    print(f"Scores: F1: {best_f1}, F1 Ignore: {best_f1_ign} Precision: {best_p}, Recall: {best_r}")
 
     return best_f1, best_f1_ign, best_p, best_r
 
