@@ -3,7 +3,7 @@
 REDOCRED_EXP_SWEEP_CONFIG = {
     "metric": {"goal": "maximize", "name": "eval_f1_macro"},
     "parameters": {
-        'seed': {"values": [1, 5, 619, 999, 111, 777]},  # , 
+        'seed': {"values": [1, 5, 619, 999, 111]},
         # "refine_prompt": {"values": [False, True]},
         # "refine_relation": {"values": [False, True]},
         # "span_marker_mode": {"values": ["markerv1", "markerv2"]},
