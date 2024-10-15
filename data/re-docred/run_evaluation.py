@@ -7,18 +7,23 @@ import os
 import sys
 from evaluation import official_evaluate
 from glirel.modules import utils
+import gc
 
 """
 https://github.com/tonytan48/Re-DocRED/tree/main/data
 
 python data/re-docred/run_evaluation.py \
-    --ckpt-dir logs/redocred/redocred-2024-09-16__21-11-24/model_43800 \
+    --ckpt-dir logs/redocred/redocred-2024-10-09__08-21-21/model_500 \
     --use-gold-coref
 
 """
 
 SUBMISSION_PATH = 'data/re-docred/res/result.json'
 INTERMEDIATE_RESULTS_PATH = 'data/re-docred/res/intermediate_results.json'
+
+def flush_memory():
+    gc.collect()
+    torch.cuda.empty_cache()
 
 with open('data/all_wikidata_properties.json', 'r') as f:
     properties = json.load(f)      
@@ -137,7 +142,7 @@ def run_evaluation(ckpt_dir, use_gold_coref=False, use_auxiliary_coref=False, mo
 
     # entity_to_cluster_idx_list --> (128, 129): 0, (33, 34): 0, (144, 145): 0, (0, 6): 0, ...
 
-
+    test_metrics = {}
     for (clusters_batch, entity_to_cluster_idx, coref_type) in coref_clusters:
         
         print(f"Evaluating using {coref_type} coreference clusters...")
@@ -150,15 +155,17 @@ def run_evaluation(ckpt_dir, use_gold_coref=False, use_auxiliary_coref=False, mo
 
         submission = []
         for example, cluster_relations in zip(test_set, cluster_relations_list):
+            valid_head_tail_idx = [(r['head']['h_idx'], r['tail']['t_idx']) for r in example['relations'] if r['head']['h_idx'] == r['tail']['t_idx']]
             for rel in cluster_relations:
+                # {'h_idx': 0, 't_idx': 1, 'r': 'country'}
                 instance = {}
                 instance['title'] = example['title']
                 instance['h_idx'] = rel['h_idx']
                 instance['t_idx'] = rel['t_idx']
                 instance['r'] = rel2id.get(rel['r'], 'NA')
                 instance['evidence'] = None
-                submission.append(instance)
-
+                if (rel['h_idx'], rel['t_idx']) in valid_head_tail_idx:
+                    submission.append(instance)
 
         '''
         submission: [
@@ -246,13 +253,20 @@ def run_evaluation(ckpt_dir, use_gold_coref=False, use_auxiliary_coref=False, mo
             print(f"Head Cluster: {head_cluster}")
             print(f"Tail Cluster: {tail_cluster}")
 
-
+        flush_memory()
         print(f"Scores {coref_type}: F1: {best_f1}, F1 Ignore: {best_f1_ign} Precision: {best_p}, Recall: {best_r}")
+        test_metrics.update({
+            f'test_f1_{coref_type}': best_f1,
+            f'test_f1_ignore_{coref_type}': best_f1_ign,
+            f'test_precision_{coref_type}': best_p,
+            f'test_recall_{coref_type}': best_r
+        })
 
     if log_file:
         sys.stdout.close()
         sys.stdout = sys.__stdout__
-    return best_f1, best_f1_ign, best_p, best_r
+
+    return test_metrics
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
