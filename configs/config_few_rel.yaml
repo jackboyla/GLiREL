@@ -41,6 +41,7 @@ label_embed_strategy: "both"  # "label" "ent_token" "both"
 # Coreference Resolution
 coref_classifier: false
 coref_loss_weight: 10.0
+coreference_label: "SELF"
 
 # Directory Paths
 dataset_name: "few_rel"
