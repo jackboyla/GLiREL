@@ -44,7 +44,7 @@ python train.py --config configs/config_wiki_zsl.yaml --wandb_sweep
 
 python train.py --config configs/config_few_rel.yaml
 
-CUDA_VISIBLE_DEVICES="2" python train.py --config configs/config_few_rel.yaml --wandb_sweep --sweep_method grid --experiment
+CUDA_VISIBLE_DEVICES="0" python train.py --config configs/config_few_rel.yaml --wandb_sweep --sweep_method grid --experiment
 
 
 '''
@@ -73,14 +73,16 @@ HP_SWEEP_CONFIG = {
 EXP_SWEEP_CONFIG = {
     "metric": {"goal": "maximize", "name": "eval_f1_macro"},
     "parameters": {
-        'seed': {"values": [1, 5, 619, 999, 111, 777]},  # , 
+        'seed': {"values": [11222333, 457365, 495538, 94757, 4756273, 385563]}, 
         # "refine_prompt": {"values": [False, True]},
         # "refine_relation": {"values": [False, True]},
         # "span_marker_mode": {"values": ["markerv1", "markerv2"]},
         # "add_entity_markers": {"values": [False, True]},
         # "label_embed_strategy": {"values": ["label"]},
-        "num_unseen_rel_types": {"values": [15, 10, 5]},
-        "prev_path": {"values": ["logs/zero_rel/zero_rel-2024-10-06__21-28-09/saved_at/model_70000", "none"]},
+        # "random_drop": {"values": [False]},
+        "num_unseen_rel_types": {"values": [ 10 ]},
+        # "subtoken_pooling": {"values": ["mean", "first_last"]},   # "mean", "first_last", "first", "last"  # https://flairnlp.github.io/docs/tutorial-embeddings/transformer-embeddings#pooling-operation
+        "prev_path": {"values": ["logs/zero_rel/zero_rel-2024-10-06__21-28-09/saved_at/model_70000" ]},  # 
     },
 }
 
@@ -97,6 +99,9 @@ def create_parser():
     parser.add_argument("--experiment", action="store_true", help="Run an experiment")
     return parser
 
+def flush_memory():
+    gc.collect()
+    torch.cuda.empty_cache()
 
 def get_unique_relations(data):
     unique_rel_types = []
@@ -470,15 +475,19 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
             elif eval_data is not None:
                 with torch.no_grad():
 
-
+                    wandb_payload = {}
 
                     # (Re-)DocRED-specific testing
                     if config.dataset_name.lower() == 'redocred':
                         logger.info("Running testing...")
-                        test_best_f1, test_best_f1_ign, test_best_p, test_best_r = run_evaluation(
+                        test_metrics = run_evaluation(
                             ckpt_dir=log_dir, use_gold_coref=True, 
                             use_auxiliary_coref=False, model=model)
-                        logger.info(f"Test F1: {test_best_f1} | Test F1 Ignore: {test_best_f1_ign} | Test P: {test_best_p} | Test R: {test_best_r}")
+                        test_log_string = "Step={step} | "
+                        for k, v in test_metrics.items():
+                            test_log_string += f"{k}: {v} | "
+                        logger.info(test_log_string)
+                        wandb_payload.update(test_metrics)
                     #######
 
 
@@ -498,10 +507,7 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
                     macro_f1, macro_precision, macro_recall = metric_dict['macro_f1'], metric_dict['macro_precision'], metric_dict['macro_recall']
                     logger.info(f"Best threshold for eval: {metric_dict['best_threshold']}")
 
-
-                    if wandb_sweep:
-                        wandb.log(
-                                {
+                    wandb_payload.update({
                                 "epoch": step // len(train_loader),
                                 "eval_f1_micro": micro_f1,
                                 "eval_f1_macro": macro_f1,
@@ -509,8 +515,10 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
                                 "eval_precision_macro": macro_precision,
                                 "eval_recall_micro": micro_recall,
                                 "eval_recall_macro": macro_recall,
-                            }
-                        )
+                    })
+
+                    if wandb_sweep:
+                        wandb.log(wandb_payload)
                     elif run is not None:
                         run.log({"eval_f1_micro": micro_f1, "eval_f1_macro": macro_f1})
 
@@ -523,8 +531,7 @@ def train(model, optimizer, train_data, config, train_rel_types, eval_rel_types,
             if hasattr(config, 'num_layers_freeze') and config.num_layers_freeze is not None:
                 model = freeze_n_layers(model, N=config.num_layers_freeze)
                 
-            torch.cuda.empty_cache()
-            gc.collect()
+            flush_memory()
 
         pbar.set_description(description)
 
@@ -560,10 +567,9 @@ def main(args):
     if args.wandb_sweep:
         run = wandb.init()
         # overwrite config values with sweep values 
-        for attribute in config._get_args():
-            if attribute in wandb.config:
-                logger.info(f"Overwriting {attribute} with {wandb.config[attribute]}")
-                config.attribute = wandb.config[attribute]
+        for attribute, v in wandb.config.items():
+            logger.info(f"Overwriting {attribute} with {wandb.config[attribute]}")
+            setattr(config, attribute, wandb.config[attribute])
 
 
     # Prep data
@@ -614,7 +620,7 @@ def main(args):
         if args.skip_splitting:
             print("Skipping dataset splitting. Randomly splitting data into train and eval sets.")
             data = sorted(data, key=lambda x: len(x['relations']))
-            
+
         elif config.num_unseen_rel_types is not None:
 
             if config.dataset_name in ['zero_rel_wiki_zsl', 'zero_rel']:
