@@ -49,6 +49,12 @@ class TokenRepLayer(nn.Module):
 
     def compute_word_embedding(self, tokens):
         sentences = [Sentence(i) for i in tokens]
+        """
+        sentences[0]
+            Sentence[29]: "[REL] doctoral advisor [REL] publisher [REL] connecting line [SEP] The Church of the Faroe Islands ( Faroese Fólkakirkjan ) is one of the smallest of the worlds state church es ."
+        [t for t in sentences[0].tokens]
+            [Token[0]: "[REL]", Token[1]: "doctoral advisor", Token[2]: "[REL]", Token[3]: "publisher", Token[4]: "[REL]", Token[5]: "connecting line", Token[6]: "[SEP]", Token[7]: "The", Token[8]: "Church", Token[9]: "of", Token[10]: "the", Token[11]: "Faroe", Token[12]: "Islands", Token[13]: "(", Token[14]: "Faroese", Token[15]: "Fólkakirkjan", Token[16]: ")", Token[17]: "is", Token[18]: "one", Token[19]: "of", Token[20]: "the", Token[21]: "smallest", Token[22]: "of", Token[23]: "the", Token[24]: "worlds", Token[25]: "state", Token[26]: "church", Token[27]: "es", Token[28]: "."]
+        """
         self.bert_layer.embed(sentences)
         token_embeddings = pad_sequence([torch.stack([t.embedding for t in k]) for k in sentences], batch_first=True)
         return token_embeddings
