@@ -38,15 +38,15 @@ logging.basicConfig(level=logging.INFO,
 
 '''
 
-python eval_with_gpt.py --model gpt-4o-mini \
-    --eval-data data/wiki_zsl_all.jsonl \
-    --num-unseen-rel-types 15 \
+python eval_with_gpt.py --model gpt-4o \
+    --eval-data data/few_rel_all.jsonl \
+    --num-unseen-rel-types 5 \
     --seed 42
 
 python eval_with_gpt.py \
     --predictions-file logs/gpt-wiki_zsl/wiki_zsl-2024-10-07__08-52-44/eval-predictions-gpt-4o-mini.jsonl \
         --eval-data data/wiki_zsl_all.jsonl
-
+    
 '''
 
 client = instructor.from_openai(openai.AsyncOpenAI())
