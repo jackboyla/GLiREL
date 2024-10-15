@@ -265,6 +265,8 @@ for SPLIT in ['train', 'dev', 'test']: # train_distant
     print(f"Overlapping entities: {len(overlapping_entities)}")
     print(f"Duplicate relations: {len(duplicate_relations)}")
 
+    data = sorted(data, key=lambda x: len(x['ner']), reverse=True)
+
     # save to a jsonl file
     with open(f'redocred_{SPLIT}.jsonl', 'w') as f:
         for item in data:
