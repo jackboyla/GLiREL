@@ -4,9 +4,11 @@ from pathlib import Path
 import re
 import os
 from typing import Dict, Optional, Union
+import numpy as np
 import torch
 import torch.nn.functional as F
 import yaml
+from tqdm import tqdm
 from glirel.modules.layers import LstmSeq2SeqEncoder, ScorerLayer, FilteringLayer, RefineLayer
 from glirel.modules.base import InstructBase
 from glirel.modules.evaluator import greedy_search, RelEvaluator
@@ -23,11 +25,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-logging.basicConfig(level=logging.INFO, 
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                    handlers=[logging.StreamHandler()])
-
-
 
 class GLiREL(InstructBase, PyTorchModelHubMixin):
     def __init__(self, config):
@@ -36,13 +33,22 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         self.config = config
 
         # [REL] token
-        self.rel_token = "<<REL>>"
-        self.sep_token = "<<SEP>>"
+        self.rel_token = "[REL]"
+        self.sep_token = "[SEP]"
+
+        label_embed_strategies = ['ent_token', 'label', 'both']
+        assert self.config.label_embed_strategy in label_embed_strategies, f"Invalid label_embed_strategy: {self.config.label_embed_strategy}. Must be one of {label_embed_strategies}"
+
+        self.positive_weight = getattr(self.config, 'positive_weight', 2.0)  # weight for positive labels (Default: 2.0)
+        self.negative_weight = getattr(self.config, 'negative_weight', 1.0)  # weight for negative labels (Default: 1.0)
+
+        self.threshold_search_metric = getattr(self.config, 'threshold_search_metric', 'micro_f1')  # metric to use for threshold search (Default: 'micro_f1')
 
         # usually a pretrained bidirectional transformer, returns first subtoken representation
+        add_tokens = [self.rel_token, self.sep_token, self.base_config.entity_start_token, self.base_config.entity_end_token]
         self.token_rep_layer = TokenRepLayer(model_name=config.model_name, fine_tune=config.fine_tune,
                                              subtoken_pooling=config.subtoken_pooling, hidden_size=config.hidden_size,
-                                             add_tokens=[self.rel_token, self.sep_token])
+                                             add_tokens=add_tokens)
 
         # hierarchical representation of tokens (zaratiana et al, 2022)
         # https://arxiv.org/pdf/2203.14710.pdf
@@ -55,7 +61,8 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
 
         self.span_rep_layer = RelRepLayer(
-            rel_mode=config.span_mode,
+            rel_mode=config.rel_mode,
+            span_mode=config.span_marker_mode,
             hidden_size=config.hidden_size,
             max_width=config.max_width,
             dropout=config.dropout,
@@ -85,8 +92,21 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
                 read_only=True
             )
 
+
+        # coreference resolution
+        if getattr(config, "coref_classifier", False):
+            self.coref_classifier = nn.Sequential(
+                nn.Linear(config.hidden_size, config.hidden_size),
+                nn.Dropout(config.dropout),
+                nn.ReLU(),
+                nn.Linear(config.hidden_size, 1)
+            )
+
+
         # scoring layer
         self.scorer = ScorerLayer(config.scorer, hidden_size=config.hidden_size, dropout=config.dropout)
+
+        self.device = next(self.parameters()).device
 
     def get_optimizer(self, lr_encoder, lr_others, freeze_token_rep=False):
         """
@@ -116,9 +136,9 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
         return optimizer
 
-    def compute_score_train(self, x):
+    def compute_score(self, x):
 
-        span_idx = x['span_idx'] * x['span_mask'].unsqueeze(-1)  # ([B, num_possible_spans, 2])  *  ([B, num_possible_spans, 1])
+        span_idx = x['span_idx'] * x['span_mask'].unsqueeze(-1).to(self.device)  # ([B, num_possible_spans, 2])  *  ([B, num_possible_spans, 1])
 
         new_length = x['seq_length'].clone()
         new_tokens = []
@@ -165,10 +185,10 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         word_rep_w_prompt = bert_output["embeddings"]  # embeddings for all tokens (with prompt)
         mask_w_prompt = bert_output["mask"]  # mask for all tokens (with prompt)
 
-        # get word representation (after [SEP]), mask (after [SEP]) and entity type representation (before [SEP])
+        # get word representation (after [SEP]), mask (after [SEP]) and relation type representation (before [SEP])
         word_rep = []      # word representation (after [SEP])
         mask = []          # mask (after [SEP])
-        rel_type_rep = []  # entity type representation (before [SEP])
+        rel_type_rep = []  # relation type representation (before [SEP])
         for i in range(len(x['tokens'])):
             prompt_entity_length = all_len_prompt[i]  # length of prompt for this example
             # get word representation (after [SEP])
@@ -178,7 +198,15 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
             # get entity type representation (before [SEP])
             relation_rep = word_rep_w_prompt[i, :prompt_entity_length - 1]  # remove [SEP]
-            relation_rep = relation_rep[0::2]  # it means that we take every second element starting from the second one
+            if self.config.label_embed_strategy == 'ent_token':
+                # Only use class token ([REL]) embeddings (every second element starting from 0)
+                relation_rep = relation_rep[0::2]
+            elif self.config.label_embed_strategy == 'label':
+                # Only use label embeddings (every second element starting from 1)
+                relation_rep = relation_rep[1::2]
+            elif self.config.label_embed_strategy == 'both':
+                # Interleave [REL] tokens and label embeddings
+                relation_rep = relation_rep.reshape(-1, 2, relation_rep.shape[-1]).mean(dim=1)  # Take the mean of each [REL] and label embedding pair
             rel_type_rep.append(relation_rep)
 
         # padding for word_rep, mask and rel_type_rep
@@ -188,7 +216,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
         # compute span representation
         word_rep = self.rnn(word_rep, mask)                  # ([B, seq_length, D])
-        rel_rep = self.span_rep_layer(word_rep, span_idx)    # ([B, num_pairs, D])
+        rel_rep = self.span_rep_layer(word_rep, span_idx=span_idx, relations_idx=x['relations_idx'])    # ([B, num_pairs, D])
 
         # compute final entity type representation (FFN)
         rel_type_rep = self.prompt_rep_layer(rel_type_rep)   # (B, len_types, D)
@@ -197,7 +225,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
         # refine relation representation ##############################################
         relation_classes = x['rel_label']  # [B, num_entity_pairs]
-        rel_rep_mask = relation_classes > 0 # -1
+        rel_rep_mask = relation_classes > 0
         ################################################################################
 
         if hasattr(self, "refine_relation"):
@@ -214,30 +242,26 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         ################################################################################
 
 
+        # Coreference Resolution ##############################
+        if hasattr(self, "coref_classifier"):
+            coref_scores = self.coref_classifier(rel_rep)  # (B, num_pairs, 1)
+        else:
+            coref_scores = None
+        #######################################################
+        
         # similarity score
         scores = self.scorer(rel_rep, rel_type_rep) # ([B, num_pairs, num_classes])
 
-        return scores, num_classes, rel_type_mask   # ([B, num_pairs, num_classes]), num_classes, ([B, num_classes])
-
-    def forward(self, x):
-        # compute span representation
-        scores, num_classes, rel_type_mask = self.compute_score_train(x)
-        batch_size = scores.shape[0]
+        return scores, num_classes, rel_type_mask, coref_scores  # ([B, num_pairs, num_classes]), num_classes, ([B, num_classes]), ([B, num_pairs, 1])
 
 
-        # loss for filtering classifier
-        logits_label = scores.view(-1, num_classes)
+    def compute_coref_loss(self, coref_scores, coref_ground_truth):
 
-        labels = x['rel_label'].view(-1)     # [B * num_entity_pairs]
+        coref_loss = F.binary_cross_entropy_with_logits(coref_scores, coref_ground_truth)
 
-        mask_label = labels != -1
-        labels.masked_fill_(~mask_label, 0)  # Set the labels of padding tokens to 0
+        return coref_loss
 
-        # one-hot encoding
-        labels_one_hot = torch.zeros(labels.size(0), num_classes + 1, dtype=torch.float32).to(scores.device) # ([batch_size * num_spans, num_classes + 1])
-        labels_one_hot.scatter_(1, labels.unsqueeze(1), 1)  # Set the corresponding index to 1
-        labels_one_hot = labels_one_hot[:, 1:]              # Remove the first column
-        # Shape of labels_one_hot: (batch_size * num_spans, num_classes)
+    def compute_relation_loss(self, logits_label, labels_one_hot):
 
         if self.config.loss_func == "binary_cross_entropy_loss":
             # compute loss (without reduction)
@@ -258,127 +282,179 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         else:
             raise ValueError(f"Invalid loss function: {self.config.loss_func}")
         
-            
+        return all_losses
+
+
+    def forward(self, x):
+        # compute span representation
+        scores, num_classes, rel_type_mask, coref_scores = self.compute_score(x)
+        batch_size = scores.size(0)
+
+
+        # loss for filtering classifier
+        logits_label = scores.view(-1, num_classes)
+
+        labels = x['rel_label'].view(-1)     # [B * num_entity_pairs]
+
+        # mask for coreference and relation labels
+        coref_mask = (labels <= -50) 
+        labels[coref_mask] = (labels[coref_mask] // -50).long()                
+        rel_mask = (labels != -1)   # Exclude padding (and coreference) labels
+
+        # separate labels for relation classification
+        rel_labels = labels.masked_fill(~rel_mask, 0)  # Set non-relation labels to 0
+
+        # one-hot encoding
+        labels_one_hot = torch.zeros(labels.size(0), num_classes + 1, dtype=torch.float32).to(scores.device) # ([batch_size * num_spans, num_classes + 1])
+        labels_one_hot.scatter_(1, rel_labels.unsqueeze(1), 1) # Set the corresponding index to 1
+        labels_one_hot = labels_one_hot[:, 1:]                 # Remove the first column
+        # Shape of labels_one_hot: (batch_size * num_spans, num_classes)
+
+        all_losses = self.compute_relation_loss(logits_label, labels_one_hot)
+        
+        # Mask and weight relation classification loss
         # mask loss using rel_type_mask (B, C)
         masked_loss = all_losses.view(batch_size, -1, num_classes) * rel_type_mask.unsqueeze(1)   #  ([B, L*K, num_classes])  *  ([B, 1, num_classes])
         all_losses = masked_loss.view(-1, num_classes)
         # expand mask_label to all_losses
-        mask_label = mask_label.unsqueeze(-1).expand_as(all_losses)
-        # put lower loss for in label_one_hot (2 for positive, 1 for negative)
-        weight_c = labels_one_hot + 1
-        # apply mask
-        all_losses = all_losses * mask_label.float() * weight_c
-        loss = all_losses.sum()
-
-        return loss
-
-
-    def compute_score_eval(self, x, device):
-        # check if classes_to_id is dict
-        assert isinstance(x['classes_to_id'], dict), "classes_to_id must be a dict"
-
-        span_idx = (x['span_idx'] * x['span_mask'].unsqueeze(-1)).to(device)
-
-        all_types = list(x['classes_to_id'].keys())
-        # multiple entity types in all_types. Prompt is appended at the start of tokens
-        entity_prompt = []
-
-        # add enity types to prompt
-        for relation_type in all_types:
-            entity_prompt.append(self.rel_token)
-            entity_prompt.append(relation_type)
-
-        entity_prompt.append(self.sep_token)
-
-        prompt_entity_length = len(entity_prompt)
-
-        # add prompt
-        tokens_p = [entity_prompt + tokens for tokens in x['tokens']]
-        seq_length_p = x['seq_length'] + prompt_entity_length
-
-        out = self.token_rep_layer(tokens_p, seq_length_p)
-
-        word_rep_w_prompt = out["embeddings"]
-        mask_w_prompt = out["mask"]
-
-        # remove prompt
-        word_rep = word_rep_w_prompt[:, prompt_entity_length:, :]
-        mask = mask_w_prompt[:, prompt_entity_length:]
-
-        # get_rel_type_rep
-        rel_type_rep = word_rep_w_prompt[:, :prompt_entity_length - 1, :]
-        # extract [ENT] tokens (which are at even positions in rel_type_rep)
-        rel_type_rep = rel_type_rep[:, 0::2, :]
-
-        rel_type_rep = self.prompt_rep_layer(rel_type_rep)  # (batch_size, len_types, hidden_size)
-        batch_size, num_classes = rel_type_rep.shape[0], rel_type_rep.shape[1]
-        # make rel_type_mask all ones of shape (B, num_classes)
-        rel_type_mask = torch.ones(batch_size, num_classes).to(device)
-
-        word_rep = self.rnn(word_rep, mask)
-        rel_rep = self.span_rep_layer(word_rep, span_idx)
-
-
-        # refine relation representation ##############################################
-        relation_classes = x['rel_label']  # [B, num_entity_pairs]
-        rel_rep_mask = relation_classes > -1
-        ################################################################################
-
-        if hasattr(self, "refine_relation"):
-            # refine relation representation
-            rel_rep = self.refine_relation(
-                rel_rep, word_rep, rel_rep_mask, mask
-            )
-
-        if hasattr(self, "refine_prompt"):
-            # refine relation representation with relation type representation ############
-            rel_type_rep = self.refine_prompt(
-                rel_type_rep, rel_rep, rel_type_mask, rel_rep_mask
-            )
-        ################################################################################
-
-
-        # scores
-        local_scores = self.scorer(rel_rep, rel_type_rep) # ([B, num_pairs, num_classes])
+        rel_mask = rel_mask.unsqueeze(-1).expand_as(all_losses)
         
+        # Assign weights based on the true labels
+        weight_c = labels_one_hot * self.positive_weight + (1 - labels_one_hot) * self.negative_weight
 
-        return local_scores
+        # apply mask
+        all_losses = all_losses * rel_mask.float() * weight_c
+        rel_loss = all_losses.sum()
+        total_loss = rel_loss
 
+        if hasattr(self, "coref_classifier"):
+            if coref_mask.sum() == 0:
+                logger.info("Coreference mask is empty, skipping coreference loss calculation")
+            else:
+                # compute coreference loss (masked for coreference labels only)
+                coref_scores = coref_scores.view(-1)                                # Flatten coref_scores to match label shape (B * num_pairs * 1)
+
+                # Prepare coref_ground_truth with valid target values (i.e, set -2 -> 1 and others -> 0)
+                coref_ground_truth = torch.zeros_like(labels, dtype=torch.float32)
+                coref_ground_truth[coref_mask] = 1.0
+
+                valid_mask = (labels != -1)
+
+                coref_loss = self.compute_coref_loss(coref_scores[valid_mask], coref_ground_truth[valid_mask])
+                coref_loss = self.config.coref_loss_weight * coref_loss
+                total_loss += coref_loss
+                return {'total_loss': total_loss, 'coref_loss': coref_loss, 'rel_loss': rel_loss}
+
+        return {'total_loss': total_loss} # total_loss is rel_loss if no coref_classifier
+    
 
     @torch.no_grad()
-    def predict(self, x, flat_ner=False, threshold=0.5, ner=None):
+    def predict(self, x, flat_ner=False, threshold: list | float = 0.5, ner=None):
         self.eval()
-        local_scores = self.compute_score_eval(x, device=next(self.parameters()).device)
+        local_scores, num_classes, rel_type_mask, coref_scores = self.compute_score(x)
 
-
-        assert isinstance(ner, list), "ner should be a list of list of spans like [[(1, 2, 'PER'), (3, 4, 'ORG'), ...], ]"
-
-        rels = []
-        for i, _ in enumerate(x["tokens"]):
-            local_i = local_scores[i]  # Predictions for the i-th item in the batch
-            # shape ([num_pairs, num_classes])
-            probabilities = torch.sigmoid(local_i)  # Convert logits to probabilities
-
-            # Iterate over all possible pairs and relation types
-            triggered_relations = [i.tolist() for i in torch.where(probabilities > threshold)]
-            # triggered_relations --> tuple of two lists, 
-            # one for pair_idx * num_triggered_classes (based on threshold) 
-            # and one for the corresponding tirggered rel_type_id, e.g pair [3, 3, 3] have rel type [0, 4, 5]
-            rels_i = []
-            for pair_idx, rel_type_idx in zip(*triggered_relations):
-
-                # Check if the pair index is within the bounds of the entity pairs
-                if pair_idx < len(x["relations_idx"][i]):
-
-                    score = probabilities[pair_idx, rel_type_idx].item()
-                    # Get the entity pair and relation type
-                    entity_pair = x["relations_idx"][i][pair_idx] 
-                    relation_type = x["id_to_classes"][rel_type_idx + 1]
-                
-                    rels_i.append((entity_pair.cpu().numpy().tolist(), relation_type, score))
+        if isinstance(threshold, float):
+            threshold = [threshold]
+        
+        probabilities = torch.sigmoid(local_scores)  # Shape: [batch_size, num_pairs, num_classes]
+        rels_per_threshold = {}
+        for thresh in threshold:
+            triggered_relations = probabilities > thresh
             
-            rels.append(rels_i)
-        return rels
+            # Get indices where relations are triggered
+            batch_indices, pair_indices, rel_type_indices = torch.nonzero(triggered_relations, as_tuple=True)
+
+            # If no relations are triggered, return empty lists
+            if batch_indices.numel() == 0:
+                rels = [[] for _ in range(len(x["tokens"]))]
+                rels_per_threshold[thresh] = rels
+                continue
+            
+            # Get scores
+            scores = probabilities[batch_indices, pair_indices, rel_type_indices]
+            
+            # Build a list of all classes_to_id mappings
+            types_list = [list(classes.keys()) for classes in x['classes_to_id']]
+            
+            # Convert indices to numpy arrays for easy handling
+            batch_indices_np = batch_indices.cpu().numpy()
+            pair_indices_np = pair_indices.cpu().numpy()
+            rel_type_indices_np = rel_type_indices.cpu().numpy()
+            scores_np = scores.cpu().numpy()
+            
+            # Get the number of relation types for each example in the batch_indices
+            type_lengths = np.array([len(types_list[i]) for i in batch_indices_np])
+            
+            # Build a mask for valid relation type indices
+            valid_rel_type_mask = rel_type_indices_np < type_lengths
+            
+            # Filter indices and scores based on the valid_rel_type_mask
+            batch_indices_np = batch_indices_np[valid_rel_type_mask]
+            pair_indices_np = pair_indices_np[valid_rel_type_mask]
+            rel_type_indices_np = rel_type_indices_np[valid_rel_type_mask]
+            scores_np = scores_np[valid_rel_type_mask]
+            
+            # If no valid indices remain after filtering, return empty predictions
+            if len(batch_indices_np) == 0:
+                rels = [[] for _ in range(len(x["tokens"]))]
+                rels_per_threshold[thresh] = rels
+                continue
+            
+            # Map relation type indices to actual relation type strings
+            relation_types = [types_list[i][rel_type_indices_np[idx]] for idx, i in enumerate(batch_indices_np)]
+            
+            # Get entity pairs
+            entity_pairs_list = []
+            valid_indices_mask = []
+            for idx, i in enumerate(batch_indices_np):
+                pair_idx = pair_indices_np[idx]
+                # Check if the pair index refers to a valid entity pair
+                relations_idx_i = x['relations_idx'][i]
+                entity_pair = relations_idx_i[pair_idx]
+                
+                # Check if entity_pair contains -1
+                if (entity_pair == -1).all():
+                    # Invalid entity pair, skip it
+                    valid_indices_mask.append(False)
+                else:
+                    # Valid entity pair
+                    entity_pairs_list.append(entity_pair)
+                    valid_indices_mask.append(True)
+            
+            # Convert valid_indices_mask to a numpy array
+            valid_indices_mask = np.array(valid_indices_mask)
+            
+            # Filter arrays based on valid_indices_mask
+            batch_indices_np = batch_indices_np[valid_indices_mask]
+            rel_type_indices_np = rel_type_indices_np[valid_indices_mask]
+            scores_np = scores_np[valid_indices_mask]
+            relation_types = [relation_types[idx] for idx in range(len(relation_types)) if valid_indices_mask[idx]]
+            
+            # If no valid entity pairs remain, return empty predictions
+            if len(entity_pairs_list) == 0:
+                rels = [[] for _ in range(len(x["tokens"]))]
+                rels_per_threshold[thresh] = rels
+                continue
+            
+            # Stack entity pairs
+            entity_pairs = torch.stack(entity_pairs_list)
+            entity_pairs_np = entity_pairs.cpu().numpy()
+            
+            # Collect relations per example
+            rels = [[] for _ in range(len(x["tokens"]))]
+            for idx in range(len(batch_indices_np)):
+                i = batch_indices_np[idx]
+                entity_pair = entity_pairs_np[idx].tolist()
+                assert all([not -1 in pos for pos in entity_pair]), f"Error: entity_pair {entity_pair} contains -1 values at index {idx}."
+                relation_type = relation_types[idx]
+                score = scores_np[idx].item()
+                rels[i].append((entity_pair, relation_type, score))
+
+            rels_per_threshold[thresh] = rels
+        
+        return rels_per_threshold if len(threshold) > 1 else rels_per_threshold[threshold[0]]
+
+
 
     def predict_relations(self, text, labels, flat_ner=True, threshold=0.5, ner=None, top_k=-1):
         return self.batch_predict_relations([text], labels, flat_ner=flat_ner, threshold=threshold, ner=[ner], top_k=top_k)[0]
@@ -467,65 +543,87 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         return all_relations
 
 
-    def evaluate(self, test_data, flat_ner=False, threshold=0.5, batch_size=12, relation_types=None, top_k=1):
+    def evaluate(
+            self, test_data, flat_ner=False, 
+            threshold: list | float = 0.5, batch_size=12, relation_types=None, 
+            top_k=1, return_preds=False, dataset_name: str = None
+        ):
         self.eval()
         logger.info(f"Number of classes to evaluate with --> {len(relation_types)}")
         data_loader = self.create_dataloader(test_data, batch_size=batch_size, relation_types=relation_types, shuffle=False)
         device = next(self.parameters()).device
-        all_preds = []
-        all_trues = []
-        for i, x in enumerate(data_loader):
-            for k, v in x.items():
-                if isinstance(v, torch.Tensor):
-                    x[k] = v.to(device)
-            x['classes_to_id'] = x['classes_to_id'][0] if type(x['classes_to_id']) is list else x['classes_to_id']
-            x['id_to_classes'] = x['id_to_classes'][0] if type(x['id_to_classes']) is list else x['id_to_classes']
-            if i == 0:
-                classes = list(x['classes_to_id'].keys())
-                logger.info(f"## Evaluation x['classes_to_id'] (showing 15/{len(classes)}) --> {classes[:15]}")
-            ner = x['entities']
 
+        threshold = [threshold] if isinstance(threshold, float) else threshold
+        all_preds = {thresh: [] for thresh in threshold}
+        all_trues = {thresh: [] for thresh in threshold}
 
-            batch_predictions = self.predict(x, flat_ner, threshold, ner)
+        with tqdm(total=len(data_loader), desc="Evaluating") as pbar:
+            for i, x in enumerate(data_loader):
+                for k, v in x.items():
+                    if isinstance(v, torch.Tensor):
+                        x[k] = v.to(device)
+                if i == 0:
+                    classes = list(x['classes_to_id'][0].keys())
+                    logger.info(f"## Evaluation x['classes_to_id'][0] (showing {min(15, len(classes))}/{len(classes)}) --> {classes[:min(15, len(classes))]}")
+                ner = x['entities']
 
-            # TODO: test throroughly
-            all_trues.extend(x["relations"])
-            # format relation predictions for metrics calculation
-            batch_predictions_formatted = []
-            for i, output in enumerate(batch_predictions):
+                batch_predictions = self.predict(x, flat_ner, threshold, ner)
+                if isinstance(batch_predictions, list):
+                    # only one threshold was used
+                    batch_predictions = {threshold[0]: batch_predictions}
 
-                # sort output by score
-                output = sorted(output, key=lambda x: x[2], reverse=True)
+                
+                # for all thresholds, collect predictions and true relations
+                for thresh, batch_preds in batch_predictions.items():
+                    all_trues[thresh].extend(x["relations"])
+                    # format relation predictions for metrics calculation
+                    batch_predictions_formatted = []
+                    for i, output in enumerate(batch_preds):
 
-                rels = []
-                position_set = {}  # track all position predictions to take top_k predictions
-                for (head_pos, tail_pos), pred_label, score in output:
+                        # sort output by score
+                        output = sorted(output, key=lambda x: x[2], reverse=True)
 
-                    hashable_positions = (tuple(head_pos), tuple(tail_pos))
-                    if hashable_positions not in position_set:
-                        position_set[hashable_positions] = 0
+                        rels = []
+                        position_set = {}  # track all position predictions to take top_k predictions
+                        for (head_pos, tail_pos), pred_label, score in output:
 
-                    if position_set[hashable_positions] < top_k:
+                            hashable_positions = (tuple(head_pos), tuple(tail_pos))
+                            if hashable_positions not in position_set:
+                                position_set[hashable_positions] = 0
 
-                        rel = {
-                            'head' : {'position': head_pos},
-                            'tail' : {'position': tail_pos},
-                            'relation_text': pred_label,
-                            'score': score,
-                        }
-                        
-                        rels.append(rel)
-                        position_set[hashable_positions] += 1
+                            if position_set[hashable_positions] < top_k:
 
-                batch_predictions_formatted.append(rels)
+                                rel = {
+                                    'head' : {'position': head_pos},
+                                    'tail' : {'position': tail_pos},
+                                    'relation_text': pred_label,
+                                    'score': score,
+                                }
+                                
+                                rels.append(rel)
+                                position_set[hashable_positions] += 1
 
-            all_preds.extend(batch_predictions_formatted)
+                        batch_predictions_formatted.append(rels)
+
+                    all_preds[thresh].extend(batch_predictions_formatted)
+                    
+                pbar.update(1)
                 
 
-        evaluator = RelEvaluator(all_trues, all_preds)
-        out, micro_f1, macro_f1 = evaluator.evaluate()
+        best_threshold = None
+        best_out, best_metric_dict = None, None
+        for thresh, preds in all_preds.items():
+            evaluator = RelEvaluator(all_trues[thresh], preds, dataset_name=dataset_name)
+            out, metric_dict = evaluator.evaluate()
+            if best_out is None or metric_dict[self.threshold_search_metric] > best_metric_dict[self.threshold_search_metric]:
+                best_out = out
+                best_metric_dict = metric_dict
+                best_threshold = thresh
+        best_metric_dict["best_threshold"] = best_threshold
         
-        return out, micro_f1, macro_f1
+        if return_preds:
+            return best_out, best_metric_dict, all_preds
+        return best_out, best_metric_dict
 
 
     @classmethod
@@ -633,6 +731,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         import flair
 
         flair.device = device
+        self.device = device
         return self
 
 

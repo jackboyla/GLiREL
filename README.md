@@ -197,7 +197,16 @@ JSONL file:
 }
 ```
 
+## License
 
+[GLiREL](https://github.com/jackboyla/GLiREL) by [Jack Boylan](https://github.com/jackboyla) is licensed under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/?ref=chooser-v1).
+
+<a href="https://creativecommons.org/licenses/by-nc-sa/4.0/?ref=chooser-v1" target="_blank" rel="license noopener noreferrer">
+    <img src="https://mirrors.creativecommons.org/presskit/icons/cc.svg?ref=chooser-v1" alt="CC Logo" style="height: 20px; margin-right: 5px; vertical-align: text-bottom;">
+    <img src="https://mirrors.creativecommons.org/presskit/icons/by.svg?ref=chooser-v1" alt="BY Logo" style="height: 20px; margin-right: 5px; vertical-align: text-bottom;">
+    <img src="https://mirrors.creativecommons.org/presskit/icons/nc.svg?ref=chooser-v1" alt="NC Logo" style="height: 20px; margin-right: 5px; vertical-align: text-bottom;">
+    <img src="https://mirrors.creativecommons.org/presskit/icons/sa.svg?ref=chooser-v1" alt="SA Logo" style="height: 20px; margin-right: 5px; vertical-align: text-bottom;">
+</a>
 
 
 
