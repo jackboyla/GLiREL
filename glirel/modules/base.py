@@ -247,6 +247,10 @@ class InstructBase(nn.Module):
         id_to_classes = []
 
         def _substitute_coref_label(coref_label, class_to_ids):
+            """
+            Assigns a special index to the coreference label. 
+            This is used to distinguish coreference from other relation types if we decide to compute coreference loss separately.
+            """
             if isinstance(coref_label, str):
                 coref_label = [coref_label.lower()]
             else:
@@ -277,13 +281,6 @@ class InstructBase(nn.Module):
 
                 # this is the list of all possible relation types (positive and negative)
                 types = list(set(positive_types + negs_i))
-
-                # # add "no relation" to labels
-                # types = [NO_RELATION_STR] + types
-
-                # if len(types) < self.base_config.num_train_rel_types:
-                #     logger.debug(f"Relation types less than num_train_rel_types: {len(types)} < {self.base_config.num_train_rel_types}")
-
 
                 # shuffle (every epoch)
                 if getattr(self.base_config, "shuffle_types", True):
