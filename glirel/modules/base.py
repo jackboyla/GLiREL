@@ -60,7 +60,7 @@ def insert_entity_markers(tokens, span_idx, relations, entity_start_token, entit
     adjusted_relations = sorted(adjusted_relations, key=lambda x: x['head']['position'][0])
     return tokens, adjusted_span_idx, adjusted_relations
 
-def generate_entity_pairs_indices(span_idx, max_distance: int | None = None):
+def generate_entity_pairs_indices(span_idx, max_distance: int | None = None, device: str = 'cpu'):
     """
     Generates a combined entity pair indices tensor for both coreference and relation classification.
     Coreference pairs are unidirectional (i < j), and relation pairs are bidirectional (i ≠ j),
@@ -80,7 +80,7 @@ def generate_entity_pairs_indices(span_idx, max_distance: int | None = None):
     span_idx_tiled = span_idx.unsqueeze(0).expand(num_entities, -1, -1)     # ([num_entities, num_entities, 2])
 
     # Indices for self-pair exclusion and directionality
-    indices = torch.arange(num_entities)
+    indices = torch.arange(num_entities, device=device)
     indices_expanded = indices.unsqueeze(1).expand(-1, num_entities)
     indices_tiled = indices.unsqueeze(0).expand(num_entities, -1)
 
@@ -120,9 +120,10 @@ class InstructBase(nn.Module):
         self.base_config = config
         self.base_config.coreference_label = getattr(config, "coreference_label", "SELF")  # NOTE: this label is given a special index to denote coreference (i.e -2)
         self.max_entity_pair_distance = config.max_entity_pair_distance
+        self.device = torch.device(getattr(config, "device", "cuda" if torch.cuda.is_available() else "cpu"))
 
-        self.base_config.entity_start_token, self.base_config.entity_end_token = "[E]", "[/E]"
         if self.base_config.span_marker_mode == 'markerv2':
+            self.base_config.entity_start_token, self.base_config.entity_end_token = "[E]", "[/E]"
             logger.info(f"Using SpanMarkerV2. Adding entity markers: {self.base_config.entity_start_token}, {self.base_config.entity_end_token}")
 
     def get_dict(self, spans, classes_to_id):
@@ -191,10 +192,12 @@ class InstructBase(nn.Module):
         #     logger.warn(f"Truncating relations and ner spans because there are too many ({len(spans_idx)} > {MAX_SPANS})")
         #     spans_idx = spans_idx[: MAX_SPANS]
         spans_idx_list = spans_idx
-        
-        spans_idx = torch.LongTensor(spans_idx)                     # [num_possible_spans, 2]
+              
+        spans_idx = torch.tensor(spans_idx, dtype=torch.long, device=self.device)  # [num_possible_spans, 2]
         relations_idx = generate_entity_pairs_indices(
-            spans_idx, max_distance=self.base_config.max_entity_pair_distance)  # [num_ent_pairs, 2, 2]
+            spans_idx, max_distance=self.base_config.max_entity_pair_distance,
+            device=self.device
+        )  # [num_ent_pairs, 2, 2]
 
         if relations is not None:  # training
             included_relations = []
@@ -210,18 +213,21 @@ class InstructBase(nn.Module):
             # get the class for each relation pair
             rel_label_dict = self.get_rel_dict(relations, classes_to_id)
             # 0 for null labels
-            rel_label = torch.LongTensor(self.get_rel_labels(relations_idx, rel_label_dict, classes_to_id))  # [num_ent_pairs]
+            rel_label = torch.tensor(
+                self.get_rel_labels(relations_idx, rel_label_dict, classes_to_id),
+                dtype=torch.long, device=self.device
+            )  # [num_ent_pairs]
 
         else:  # no labels --> predict
             rel_label_dict = defaultdict(int)
-            rel_label = torch.LongTensor([rel_label_dict[i] for i in relations_idx])
+            rel_label = torch.tensor([rel_label_dict[i] for i in relations_idx], dtype=torch.long, device=self.device)
 
 
         # mask for valid spans
         valid_span_mask = spans_idx[:, 1] > seq_length - 1
 
         # mask invalid positions
-        span_label = torch.ones(spans_idx.size(0), dtype=torch.long)
+        span_label = torch.ones(spans_idx.size(0), dtype=torch.long, device=self.device)
         span_label = span_label.masked_fill(valid_span_mask, -1)  # [num_possible_spans]
 
         # mask for valid relations
@@ -241,7 +247,9 @@ class InstructBase(nn.Module):
         }
         return out
 
-    def collate_fn(self, batch_list, relation_types=None, train_relation_types=None):
+    def collate_fn(self, batch_list, relation_types=None, train_relation_types=None, device=None):
+        if device:
+            self.device = torch.device(device)
         assert hasattr(self.base_config, "fixed_relation_types"), "`fixed_relation_types` must be set in config"
         class_to_ids = []
         id_to_classes = []
@@ -356,7 +364,7 @@ class InstructBase(nn.Module):
         )
 
         return {
-            'seq_length': torch.LongTensor([el['seq_length'] for el in batch]),
+            'seq_length': torch.tensor([el['seq_length'] for el in batch], dtype=torch.long, device=self.device),
             'span_idx': span_idx,
             'tokens': [el['tokens'] for el in batch],
             'span_mask': span_label != -1,

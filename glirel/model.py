@@ -45,7 +45,9 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         self.threshold_search_metric = getattr(self.config, 'threshold_search_metric', 'micro_f1')  # metric to use for threshold search (Default: 'micro_f1')
 
         # usually a pretrained bidirectional transformer, returns first subtoken representation
-        add_tokens = [self.rel_token, self.sep_token, self.base_config.entity_start_token, self.base_config.entity_end_token]
+        add_tokens = [self.rel_token, self.sep_token]
+        if hasattr(self.base_config, "entity_start_token"):
+            add_tokens += self.base_config.entity_start_token, self.base_config.entity_end_token
         self.token_rep_layer = TokenRepLayer(model_name=config.model_name, fine_tune=config.fine_tune,
                                              subtoken_pooling=config.subtoken_pooling, hidden_size=config.hidden_size,
                                              add_tokens=add_tokens)
@@ -106,7 +108,6 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         # scoring layer
         self.scorer = ScorerLayer(config.scorer, hidden_size=config.hidden_size, dropout=config.dropout)
 
-        self.device = next(self.parameters()).device
 
     def get_optimizer(self, lr_encoder, lr_others, freeze_token_rep=False):
         """
@@ -491,8 +492,8 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
             for i, x in enumerate(input_x):
                 x['ner'] = ner[i]
 
-        x = self.collate_fn(input_x, labels)
-        
+        x = self.collate_fn(input_x, labels, device=self.device)
+        assert all([l in labels for l in x['classes_to_id'][0].keys()]), f"Labels mismatch after collate function: {labels} != {x['classes_to_id'][0].keys()}. `config.fixed_relation_types` is likely wrong"
         outputs = self.predict(x, flat_ner=flat_ner, threshold=threshold, ner=ner)
 
         # retrieve top_k predictions (if top_k > -1)
@@ -548,10 +549,13 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
             threshold: list | float = 0.5, batch_size=12, relation_types=None, 
             top_k=1, return_preds=False, dataset_name: str = None
         ):
+        # NOTE: observing that subsequent evaluations are faster than the first one and not sure why
         self.eval()
-        logger.info(f"Number of classes to evaluate with --> {len(relation_types)}")
+        if len(relation_types) > 0:
+            logger.info(f"Number of classes to evaluate with --> {len(relation_types)}")
+        else:
+            logger.info(f"No fixed relation types given for evaluation. Sampling relation types from the batch.")
         data_loader = self.create_dataloader(test_data, batch_size=batch_size, relation_types=relation_types, shuffle=False)
-        device = next(self.parameters()).device
 
         threshold = [threshold] if isinstance(threshold, float) else threshold
         all_preds = {thresh: [] for thresh in threshold}
@@ -559,9 +563,6 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
         with tqdm(total=len(data_loader), desc="Evaluating") as pbar:
             for i, x in enumerate(data_loader):
-                for k, v in x.items():
-                    if isinstance(v, torch.Tensor):
-                        x[k] = v.to(device)
                 if i == 0:
                     classes = list(x['classes_to_id'][0].keys())
                     logger.info(f"## Evaluation x['classes_to_id'][0] (showing {min(15, len(classes))}/{len(classes)}) --> {classes[:min(15, len(classes))]}")
