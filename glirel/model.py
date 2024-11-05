@@ -45,7 +45,8 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         self.threshold_search_metric = getattr(self.config, 'threshold_search_metric', 'micro_f1')  # metric to use for threshold search (Default: 'micro_f1')
 
         # usually a pretrained bidirectional transformer, returns first subtoken representation
-        add_tokens = [self.rel_token, self.sep_token]
+        # add_tokens = [self.rel_token, self.sep_token]
+        add_tokens = [self.rel_token, self.sep_token, self.base_config.entity_start_token, self.base_config.entity_end_token]
         if hasattr(self.base_config, "entity_start_token"):
             add_tokens += self.base_config.entity_start_token, self.base_config.entity_end_token
         self.token_rep_layer = TokenRepLayer(model_name=config.model_name, fine_tune=config.fine_tune,

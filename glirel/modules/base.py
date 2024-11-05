@@ -122,8 +122,8 @@ class InstructBase(nn.Module):
         self.max_entity_pair_distance = config.max_entity_pair_distance
         self.device = torch.device(getattr(config, "device", "cuda" if torch.cuda.is_available() else "cpu"))
 
+        self.base_config.entity_start_token, self.base_config.entity_end_token = "[E]", "[/E]"
         if self.base_config.span_marker_mode == 'markerv2':
-            self.base_config.entity_start_token, self.base_config.entity_end_token = "[E]", "[/E]"
             logger.info(f"Using SpanMarkerV2. Adding entity markers: {self.base_config.entity_start_token}, {self.base_config.entity_end_token}")
 
     def get_dict(self, spans, classes_to_id):
