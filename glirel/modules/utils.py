@@ -3,6 +3,39 @@ import torch
 import torch.nn.functional as F
 
 
+def remove_duplicates(data):
+    """
+    - Check for and remove duplicate spans and relations in the data.
+    """
+
+    for i, item in enumerate(data):
+        # Remove duplicate relations
+        relation_pos = set()
+        unique_relations = []
+        for r in item['relations']:
+            position_tuple = (tuple(r['head']['position']), tuple(r['tail']['position']))
+            if position_tuple not in relation_pos:
+                relation_pos.add(position_tuple)
+                unique_relations.append(r)
+            else:
+                print(f"Duplicate relation removed in (idx {i}) Relation --> {r}")
+        item['relations'] = unique_relations  # Update relations with unique list
+
+        # Remove duplicate spans
+        span_set = set()
+        unique_spans = []
+        for span in item['ner']:
+            span_pos = (span[0], span[1])
+            if span_pos not in span_set:
+                span_set.add(span_pos)
+                unique_spans.append(span)
+            else:
+                print(f"Duplicate span removed in (idx {i}) Span --> {span}")
+        item['ner'] = unique_spans  # Update NER spans with unique list
+
+    return data
+
+
 def sanity_check_data(data):
     """
     - Check for duplicate spans and relations in the data.
