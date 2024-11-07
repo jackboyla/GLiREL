@@ -2,6 +2,35 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+
+def sanity_check_data(data):
+    """
+    - Check for duplicate spans and relations in the data.
+    - Ensure that the relation positions are found in the NER spans.
+    """
+
+    for i, item in enumerate(data):
+        relation_pos = set()
+        for r in item['relations']:
+            position_tuple = (tuple(r['head']['position']), tuple(r['tail']['position']))
+            # duplicate relations
+            assert position_tuple not in relation_pos, f"Duplicate position for relation in (idx {i}) Relation --> {r}"
+            relation_pos.add(position_tuple)
+
+        span_set = set()
+        for span in item['ner']:
+            span_pos = (span[0], span[1])
+            # duplicate spans
+            assert span_pos not in span_set, f"Duplicate span in (idx {i}) Span --> {span}"
+            span_set.add(span_pos)
+
+
+        for pos_tuple in relation_pos:
+            for pos in pos_tuple:
+                # relation position not found in NER spans
+                assert pos in span_set, f"Relation position not found in NER spans in (idx {i}) Relation position --> {pos}"
+
+
 def constrain_relations_by_entity_type(ents, labels, relations):
     '''
     relations: {'head_pos': [15, 17], 'tail_pos': [25, 26], 'head_text': ['April', '1976'], 'tail_text': ['California'], 'label': 'headquartered in', 'score': 0.9820516705513}
