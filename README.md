@@ -24,7 +24,7 @@ Once you've downloaded the GLiREL library, you can import the `GLiREL` class. Yo
 from glirel import GLiREL
 import spacy
 
-model = GLiREL.from_pretrained("jackboyla/glirel_beta")
+model = GLiREL.from_pretrained("jackboyla/glirel-large-v0")
 
 nlp = spacy.load('en_core_web_sm')
 
