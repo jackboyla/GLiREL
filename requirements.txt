@@ -1,10 +1,8 @@
 torch
 transformers
 huggingface_hub
-datasets
 flair
 seqeval
 tqdm
-spacy
 wandb
 scipy==1.10.1
