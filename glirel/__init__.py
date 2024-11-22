@@ -16,7 +16,7 @@ except ImportError:
 else:
 
     DEFAULT_SPACY_CONFIG = {
-        "model": "jackboyla/glirel_beta",
+        "model": "jackboyla/glirel-large-v0",
         "batch_size": 1,
         "device": None,
     }
