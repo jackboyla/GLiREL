@@ -2,3 +2,5 @@ spacy
 datasets
 ipdb
 pytest
+build
+twine
