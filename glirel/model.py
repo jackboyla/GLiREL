@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import yaml
+import time
 from tqdm import tqdm
 from glirel.modules.layers import LstmSeq2SeqEncoder, ScorerLayer, FilteringLayer, RefineLayer
 from glirel.modules.base import InstructBase
@@ -21,9 +22,7 @@ from torch.nn.utils.rnn import pad_sequence
 from huggingface_hub import PyTorchModelHubMixin, hf_hub_download
 from huggingface_hub.utils import HfHubHTTPError
 from typing import List, Dict, Union
-import logging
-
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 class GLiREL(InstructBase, PyTorchModelHubMixin):
@@ -353,106 +352,129 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
     @torch.no_grad()
     def predict(self, x, flat_ner=False, threshold: list | float = 0.5, ner=None):
         self.eval()
+        
+        # start_time = time.time()
+        
         local_scores, num_classes, rel_type_mask, coref_scores = self.compute_score(x)
+        
+        # forward_pass_time = time.time() - start_time
+        # logger.info(f"[Optimized Predict] Time taken for forward pass: {forward_pass_time:.4f} seconds")
 
         if isinstance(threshold, float):
             threshold = [threshold]
         
         probabilities = torch.sigmoid(local_scores)  # Shape: [batch_size, num_pairs, num_classes]
+        
+        # Start timing thresholding without synchronization
+        # start = time.time()
+        
+        # Build a global mapping from class names to IDs
+        all_class_names = set()
+        for classes in x['classes_to_id']:
+            all_class_names.update(classes.keys())
+        class_name_to_id = {name: idx for idx, name in enumerate(sorted(all_class_names))}
+        id_to_class_name = {idx: name for name, idx in class_name_to_id.items()}
+        num_classes_total = len(class_name_to_id)
+
+        # Convert types_list to tensors of class IDs
+        types_list = [torch.tensor([class_name_to_id[name] for name in classes.keys()], device=probabilities.device) for classes in x['classes_to_id']]
+        max_num_classes = max(len(types) for types in types_list)
+        padded_types_tensor = torch.full((len(types_list), max_num_classes), -1, dtype=torch.long, device=probabilities.device)
+        for idx, types in enumerate(types_list):
+            padded_types_tensor[idx, :types.size(0)] = types
+
+        # Convert x['relations_idx'] to a padded tensor
+        relations_idx_list = x['relations_idx']
+        max_num_pairs = probabilities.shape[1]  # Should match num_pairs in local_scores
+        # Determine the maximum shape beyond the first dimension
+        max_relations_idx_shape = relations_idx_list[0].shape[1:]  # Exclude the first dimension (num_pairs)
+
+        # Initialize the padded tensor with the maximum shape
+        padded_shape = (len(relations_idx_list), max_num_pairs) + max_relations_idx_shape
+        padded_relations_idx = torch.full(padded_shape, -1, dtype=torch.long, device=probabilities.device)
+
+        # Pad and assign each relations_idx tensor
+        for idx, relations_idx in enumerate(relations_idx_list):
+            num_pairs = relations_idx.shape[0]
+            padded_relations_idx[idx, :num_pairs, ...] = relations_idx.to(probabilities.device)
+
+        logger.info(f"## Max Number of entity pairs: {max_num_pairs}")
+        logger.info(f"## Max Number of classes: {max_num_classes}")
+
+        # Initialize the dictionary to store results per threshold
         rels_per_threshold = {}
         for thresh in threshold:
-            triggered_relations = probabilities > thresh
-            
-            # Get indices where relations are triggered
-            batch_indices, pair_indices, rel_type_indices = torch.nonzero(triggered_relations, as_tuple=True)
+            # Apply threshold
+            triggered_relations = probabilities > thresh  # Shape: [batch_size, num_pairs, num_classes]
 
-            # If no relations are triggered, return empty lists
+            # Build a mask for valid class indices
+            batch_sizes = torch.tensor([len(types) for types in types_list], device=probabilities.device)
+            class_mask = torch.arange(max_num_classes, device=probabilities.device).unsqueeze(0).unsqueeze(0) < batch_sizes.unsqueeze(1).unsqueeze(2)
+            triggered_relations &= class_mask
+
+            # Get indices where relations are triggered
+            batch_indices, pair_indices, class_indices = torch.nonzero(triggered_relations, as_tuple=True)
+
             if batch_indices.numel() == 0:
                 rels = [[] for _ in range(len(x["tokens"]))]
                 rels_per_threshold[thresh] = rels
                 continue
-            
+
             # Get scores
-            scores = probabilities[batch_indices, pair_indices, rel_type_indices]
+            scores = probabilities[batch_indices, pair_indices, class_indices]
             
-            # Build a list of all classes_to_id mappings
-            types_list = [list(classes.keys()) for classes in x['classes_to_id']]
+            # Map class indices to actual class IDs
+            class_ids = padded_types_tensor[batch_indices, class_indices]
             
-            # Convert indices to numpy arrays for easy handling
-            batch_indices_np = batch_indices.cpu().numpy()
-            pair_indices_np = pair_indices.cpu().numpy()
-            rel_type_indices_np = rel_type_indices.cpu().numpy()
-            scores_np = scores.cpu().numpy()
-            
-            # Get the number of relation types for each example in the batch_indices
-            type_lengths = np.array([len(types_list[i]) for i in batch_indices_np])
-            
-            # Build a mask for valid relation type indices
-            valid_rel_type_mask = rel_type_indices_np < type_lengths
-            
-            # Filter indices and scores based on the valid_rel_type_mask
-            batch_indices_np = batch_indices_np[valid_rel_type_mask]
-            pair_indices_np = pair_indices_np[valid_rel_type_mask]
-            rel_type_indices_np = rel_type_indices_np[valid_rel_type_mask]
-            scores_np = scores_np[valid_rel_type_mask]
-            
-            # If no valid indices remain after filtering, return empty predictions
-            if len(batch_indices_np) == 0:
+            # Remove invalid class IDs (i.e., where class_id == -1)
+            valid_class_mask = class_ids != -1
+            batch_indices = batch_indices[valid_class_mask]
+            pair_indices = pair_indices[valid_class_mask]
+            class_ids = class_ids[valid_class_mask]
+            scores = scores[valid_class_mask]
+
+            if batch_indices.numel() == 0:
                 rels = [[] for _ in range(len(x["tokens"]))]
                 rels_per_threshold[thresh] = rels
                 continue
-            
-            # Map relation type indices to actual relation type strings
-            relation_types = [types_list[i][rel_type_indices_np[idx]] for idx, i in enumerate(batch_indices_np)]
-            
-            # Get entity pairs
-            entity_pairs_list = []
-            valid_indices_mask = []
-            for idx, i in enumerate(batch_indices_np):
-                pair_idx = pair_indices_np[idx]
-                # Check if the pair index refers to a valid entity pair
-                relations_idx_i = x['relations_idx'][i]
-                entity_pair = relations_idx_i[pair_idx]
-                
-                # Check if entity_pair contains -1
-                if (entity_pair == -1).all():
-                    # Invalid entity pair, skip it
-                    valid_indices_mask.append(False)
-                else:
-                    # Valid entity pair
-                    entity_pairs_list.append(entity_pair)
-                    valid_indices_mask.append(True)
-            
-            # Convert valid_indices_mask to a numpy array
-            valid_indices_mask = np.array(valid_indices_mask)
-            
-            # Filter arrays based on valid_indices_mask
-            batch_indices_np = batch_indices_np[valid_indices_mask]
-            rel_type_indices_np = rel_type_indices_np[valid_indices_mask]
-            scores_np = scores_np[valid_indices_mask]
-            relation_types = [relation_types[idx] for idx in range(len(relation_types)) if valid_indices_mask[idx]]
-            
-            # If no valid entity pairs remain, return empty predictions
-            if len(entity_pairs_list) == 0:
+
+            # Get corresponding entity pairs
+            entity_pairs = padded_relations_idx[batch_indices, pair_indices]  # Shape: [num_relations, ...]
+
+            # Build a mask for valid entity pairs (entity_pair does not contain -1)
+            valid_entity_mask = (entity_pairs != -1).all(dim=tuple(range(1, entity_pairs.dim())))
+            batch_indices = batch_indices[valid_entity_mask]
+            pair_indices = pair_indices[valid_entity_mask]
+            entity_pairs = entity_pairs[valid_entity_mask]
+            class_ids = class_ids[valid_entity_mask]
+            scores = scores[valid_entity_mask]
+
+            if batch_indices.numel() == 0:
                 rels = [[] for _ in range(len(x["tokens"]))]
                 rels_per_threshold[thresh] = rels
                 continue
-            
-            # Stack entity pairs
-            entity_pairs = torch.stack(entity_pairs_list)
-            entity_pairs_np = entity_pairs.cpu().numpy()
-            
+
+            # Convert class IDs to class names
+            class_ids_cpu = class_ids.cpu()
+            relation_types = [id_to_class_name[class_id.item()] for class_id in class_ids_cpu]
+
             # Collect relations per example
             rels = [[] for _ in range(len(x["tokens"]))]
-            for idx in range(len(batch_indices_np)):
-                i = batch_indices_np[idx]
-                entity_pair = entity_pairs_np[idx].tolist()
-                assert all([not -1 in pos for pos in entity_pair]), f"Error: entity_pair {entity_pair} contains -1 values at index {idx}."
+            batch_indices_cpu = batch_indices.cpu()
+            entity_pairs_cpu = entity_pairs.cpu()
+            scores_cpu = scores.cpu()
+            for idx in range(batch_indices.size(0)):
+                i = batch_indices_cpu[idx].item()
+                entity_pair = entity_pairs_cpu[idx].tolist()
                 relation_type = relation_types[idx]
-                score = scores_np[idx].item()
+                score = scores_cpu[idx].item()
                 rels[i].append((entity_pair, relation_type, score))
 
             rels_per_threshold[thresh] = rels
+
+
+        # thresholding_time = time.time() - start
+        # logger.info(f"[Optimized Predict] Time taken for thresholding: {thresholding_time:.4f} seconds")
         
         return rels_per_threshold if len(threshold) > 1 else rels_per_threshold[threshold[0]]
 
@@ -548,7 +570,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
     def evaluate(
             self, test_data, flat_ner=False, 
             threshold: list | float = 0.5, batch_size=12, relation_types=None, 
-            top_k=1, return_preds=False, dataset_name: str = None
+            top_k=1, return_preds=False, dataset_name: str = None, num_eval_samples: int = None
         ):
         # NOTE: observing that subsequent evaluations are faster than the first one and not sure why
         self.eval()
@@ -562,7 +584,9 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         all_preds = {thresh: [] for thresh in threshold}
         all_trues = {thresh: [] for thresh in threshold}
 
-        with tqdm(total=len(data_loader), desc="Evaluating") as pbar:
+        # if the dataset is streamable, num_eval_samples should be provided
+        len_data_loader = num_eval_samples or len(data_loader)
+        with tqdm(total=len_data_loader, desc="Evaluating") as pbar:
             for i, x in enumerate(data_loader):
                 if i == 0:
                     classes = list(x['classes_to_id'][0].keys())
