@@ -19,6 +19,7 @@ else:
         "model": "jackboyla/glirel-large-v0",
         "batch_size": 1,
         "device": None,
+        "threshold": 0.3,
     }
 
     @Language.factory(
@@ -32,6 +33,7 @@ else:
         model: str,
         batch_size: int,
         device: Optional[Union[str, torch.device]],
+        threshold: float,
     ) -> "SpacyGLiRELWrapper":
         from glirel.spacy_integration import SpacyGLiRELWrapper
         return SpacyGLiRELWrapper(model, batch_size=batch_size, device=device)
