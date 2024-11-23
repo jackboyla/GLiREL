@@ -399,8 +399,8 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
             num_pairs = relations_idx.shape[0]
             padded_relations_idx[idx, :num_pairs, ...] = relations_idx.to(probabilities.device)
 
-        logger.info(f"## Max Number of entity pairs: {max_num_pairs}")
-        logger.info(f"## Max Number of classes: {max_num_classes}")
+        # logger.info(f"## Max Number of entity pairs: {max_num_pairs}")
+        # logger.info(f"## Max Number of classes: {max_num_classes}")
 
         # Initialize the dictionary to store results per threshold
         rels_per_threshold = {}
