@@ -10,6 +10,7 @@ import torch.nn.functional as F
 import yaml
 import time
 from tqdm import tqdm
+import glirel
 from glirel.modules.layers import LstmSeq2SeqEncoder, ScorerLayer, FilteringLayer, RefineLayer
 from glirel.modules.base import InstructBase
 from glirel.modules.evaluator import greedy_search, RelEvaluator
@@ -668,6 +669,8 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         strict: bool = False,
         **model_kwargs,
     ):
+        if 'glirel_beta' in model_id:
+            assert int(glirel.__version__.split('.')[0]) == 0, f"glirel_beta is only compatible with glirel<1.0.0. Detected version: {glirel.__version__}"
 
         # Use "pytorch_model.bin" and "glirel_config.json"
         model_file = Path(model_id) / "pytorch_model.bin"

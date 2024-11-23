@@ -6,6 +6,7 @@ import torch
 from datasets import Dataset
 from spacy.tokens import Doc, Span
 from spacy.util import filter_spans, minibatch
+from loguru import logger
 
 from glirel import GLiREL
 from glirel.modules.utils import constrain_relations_by_entity_type
@@ -63,6 +64,7 @@ class SpacyGLiRELWrapper:
         *args,
         batch_size: int = 1,
         device: Optional[Union[str, torch.device]] = None,
+        threshold: float = 0.3,
         **kwargs,
     ) -> None:
         """Initialize a SpanMarker wrapper for spaCy.
@@ -82,22 +84,24 @@ class SpacyGLiRELWrapper:
         elif torch.cuda.is_available():
             self.model.to("cuda")
         self.batch_size = batch_size
+        self.threshold = threshold
 
     def _set_relatons(self, doc: Doc, relations: List[Dict]):
         doc.set_extension("relations", default=None, force=True)
         doc._.relations = relations
         return doc
 
-    def __call__(self, doc: Doc) -> Doc:
+    def __call__(self, doc: Doc, threshold=None) -> Doc:
+        threshold = threshold or self.threshold
         if len(doc.ents) < 2: 
-            print("The input text must contain at least two entities; skipping...")
+            logger.warning("The input text must contain at least two entities; skipping...")
             doc = self._set_relatons(doc, relations=[])
             return doc
 
         try:
             labels = doc._context["glirel_labels"]
         except Exception as e:
-            print("The labels must be passed as a context attribute eg, `nlp.pipe([(text, {'re_labels': ['father', ..]})], as_tuples=True)`")
+            logger.error("The labels must be passed as a context attribute eg, `nlp.pipe([(text, {'re_labels': ['father', ..]})], as_tuples=True)`")
             raise e
 
         if isinstance(labels, dict):
@@ -106,7 +110,7 @@ class SpacyGLiRELWrapper:
         
         tokens = [token.text for token in doc]
         ner = [[ent.start, (ent.end - 1), ent.label_, ent.text] for ent in doc.ents]
-        relations = self.model.predict_relations(tokens, labels, threshold=0.0, ner=ner, top_k=1)
+        relations = self.model.predict_relations(tokens, labels, threshold=threshold, ner=ner, top_k=1)
 
         if isinstance(doc._context["glirel_labels"], list) is False:
             relations = constrain_relations_by_entity_type(doc.ents, labels_and_constraints, relations)
