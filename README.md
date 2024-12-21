@@ -2,13 +2,21 @@
 
 GLiREL is a Relation Extraction model capable of classifying unseen relations given the entities within a text. This builds upon the excelent work done by Urchade Zaratiana, Nadi Tomeh, Pierre Holat, Thierry Charnois on the [GLiNER](https://github.com/urchade/GLiNER) library which enables efficient zero-shot Named Entity Recognition.
 
-* GLiNER paper: [GLiNER: Generalist Model for Named Entity Recognition using Bidirectional Transformer](https://arxiv.org/abs/2311.08526)
 
-* Train a Zero-shot model: <a href="https://colab.research.google.com/github/jackboyla/GLiREL/blob/main/train.ipynb" target="_blank">
-  <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/>
-</a>
+<p align="center">
+    <a href="https://pypi.org/project/glirel/" target="_blank">
+        <img alt="Python" src="https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54" />
+        <img alt="Version" src="https://img.shields.io/pypi/v/glirel?style=for-the-badge&color=3670A0">
+    </a>
+</p>
 
-<!-- <img src="demo.jpg" alt="Demo Image" width="50%"/> -->
+<p align="center">
+    <a href="https://arxiv.org/abs/2311.08526">📄 GLiNER Paper</a>
+    <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
+    <a href="https://huggingface.co/spaces/jackboyla/GLiREL">🤗 Demo</a>
+    <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
+    <a href="https://huggingface.co/collections/jackboyla/glirel-6766b213a4c1fa8c4e982322">🤗 Available models</a>
+</p>
 
 ---
 # Installation
@@ -137,29 +145,6 @@ Descending Order by Score:
 ['Ronald', 'Wayne'] --> co-founder --> ['Apple', 'Inc.'] | score: 0.07996643334627151
 ```
 
-
-## To run experiments
-
-FewRel: ~56k examples
-WikiZSL: ~85k examples
-
-```bash
-# few_rel
-cd data
-python process_few_rel.py
-cd ..
-# adjust config
-python train.py --config config_few_rel.yaml
-```
-
-```bash
-# wiki_zsl
-cd data
-python process_wiki_zsl.py
-cd ..
-# <adjust config>
-python train.py --config config_wiki_zsl.yaml
-```
 
 ## Example training data
 
