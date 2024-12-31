@@ -9,7 +9,7 @@ NUM_TRAIN_EXAMPLES = 'all'
 NUM_EVAL_EXAMPLES = 'all'
 
 print("Loading datasets...")
-dataset_names = ["jackboyla/ZeroRel", 'jackboyla/gone_and_growned_my_own_dataset', 'jackboyla/zsre_grow']
+dataset_names = ["jackboyla/ZeroRel"]
 
 # Initialize an empty list to store datasets
 datasets_list = []
