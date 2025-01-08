@@ -194,4 +194,17 @@ JSONL file:
 </a>
 
 
+## Citation
+If you use code or ideas from this project, please cite:
+```
+@misc{boylan2025glirelgeneralistmodel,
+      title={GLiREL -- Generalist Model for Zero-Shot Relation Extraction},
+      author={Jack Boylan and Chris Hokamp and Demian Gholipour Ghalandari},
+      year={2025},
+      eprint={2501.03172},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2501.03172},
+}
+```
 
