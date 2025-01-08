@@ -11,6 +11,8 @@ GLiREL is a Relation Extraction model capable of classifying unseen relations gi
 </p>
 
 <p align="center">
+    <a href="https://arxiv.org/abs/2501.03172">📄 GLiREL Paper</a>
+    <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
     <a href="https://arxiv.org/abs/2311.08526">📄 GLiNER Paper</a>
     <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
     <a href="https://huggingface.co/spaces/jackboyla/GLiREL">🤗 Demo</a>
