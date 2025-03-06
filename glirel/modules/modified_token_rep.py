@@ -278,9 +278,15 @@ class ModifiedTokenRepLayer(nn.Module):
             subtoken_pooling=subtoken_pooling,
             allow_long_sentences=True
         )
+        
+        # Flair’s code automatically inserts "[FLERT]" if use_context_separator=True that is the default
+        # Adding also it here to replicate the same behavior
+        if "[FLERT]" not in self.bert_layer.tokenizer.get_vocab():
+            self.bert_layer.tokenizer.add_special_tokens({"additional_special_tokens": ["[FLERT]"]})
 
         # Add tokens to vocabulary
-        self.bert_layer.tokenizer.add_tokens(add_tokens)
+        if add_tokens:
+            self.bert_layer.tokenizer.add_tokens(add_tokens)
 
         # Resize token embeddings
         self.bert_layer.model.resize_token_embeddings(len(self.bert_layer.tokenizer))
