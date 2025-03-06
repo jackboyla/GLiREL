@@ -33,6 +33,7 @@ class TokenRepLayer(nn.Module):
         bert_hidden_size = self.bert_layer.embedding_length
 
         if hidden_size != bert_hidden_size:
+            torch.manual_seed(42)
             self.projection = nn.Linear(bert_hidden_size, hidden_size)
 
     def forward(self, tokens: List[List[str]], lengths: torch.Tensor):

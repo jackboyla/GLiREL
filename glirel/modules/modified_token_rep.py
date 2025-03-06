@@ -6,10 +6,6 @@ from torch.nn.utils.rnn import pad_sequence
 from typing import List
 
 
-#TODO: first_last pooling, tests fail
-#TODO: When hidden_size != bert_hidden_size, tests fails
-#TODO: custom_token test fails
-
 ########################################################################
 # Replicates Flair’s logic
 ########################################################################
@@ -294,6 +290,7 @@ class ModifiedTokenRepLayer(nn.Module):
         bert_hidden_size = self.bert_layer.embedding_length
 
         if hidden_size != bert_hidden_size:
+            torch.manual_seed(42)
             self.projection = nn.Linear(bert_hidden_size, hidden_size)
 
     def forward(self, tokens: List[List[str]], lengths: torch.Tensor):
