@@ -227,21 +227,26 @@ class CustomTransformerWordEmbeddings(nn.Module):
             fill_masked_elements(all_token_embeddings, last_hidden, last_mask, word_ids_tensor, token_lengths_tensor)
 
         elif self.subtoken_pooling == "first_last":
-            # doubling hidden size => first half for 'first', second half for 'last'
-            real_hsize = self.model.config.hidden_size
-            gain_mask = (word_ids_tensor[:, 1:] != word_ids_tensor[:, :-1])
-            ones = torch.ones((batch_size, 1), dtype=torch.bool, device=device)
-            first_mask = torch.cat([ones, gain_mask], dim=1)
-            last_mask = torch.cat([gain_mask, ones], dim=1)
-            # fill first half
-            fill_masked_elements(
-                all_token_embeddings[:, :, :real_hsize],
-                last_hidden, first_mask, word_ids_tensor, token_lengths_tensor
+            gain_mask = word_ids_tensor[:, 1:] != word_ids_tensor[:, :-1]
+            true_tensor = torch.ones((batch_size, 1), dtype=torch.bool, device=device)
+            first_mask = torch.cat([true_tensor, gain_mask], dim=1)
+            last_mask = torch.cat([gain_mask, true_tensor], dim=1)
+
+            # Fill the first half
+            all_token_embeddings[:, :, :hidden_dim] = fill_masked_elements(
+                all_token_embeddings[:, :, :hidden_dim],
+                last_hidden,
+                first_mask,
+                word_ids_tensor,
+                token_lengths_tensor
             )
-            # fill second half
-            fill_masked_elements(
-                all_token_embeddings[:, :, real_hsize:],
-                last_hidden, last_mask, word_ids_tensor, token_lengths_tensor
+            # Fill the second half
+            all_token_embeddings[:, :, hidden_dim:] = fill_masked_elements(
+                all_token_embeddings[:, :, hidden_dim:],
+                last_hidden,
+                last_mask,
+                word_ids_tensor,
+                token_lengths_tensor
             )
 
         elif self.subtoken_pooling == "mean":
