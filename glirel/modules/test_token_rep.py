@@ -1,7 +1,6 @@
 import pytest
-import torch
 
-from typing import List
+import torch
 from torch import nn
 
 from glirel.modules.token_rep import TokenRepLayer
@@ -11,12 +10,12 @@ from glirel.modules.token_rep import TokenRepLayer
     "model_name,fine_tune,subtoken_pooling,hidden_size,add_tokens",
     [
         ("microsoft/deberta-v3-large", True, "first", 1024, []),
-        ("microsoft/deberta-v3-large", True, "first", 768, []),   
-        ("microsoft/deberta-v3-small", True,  "first", 768, []),                  
+        ("microsoft/deberta-v3-large", True, "first", 768, []),
+        ("microsoft/deberta-v3-small", True,  "first", 768, []),
         ("microsoft/deberta-v3-small", False, "first", 256, []),
         ("microsoft/deberta-v3-small", True, "mean", 768, ["[REL]", "[SEP]"]),
-        ("microsoft/deberta-v3-small", True, "last", 768, ["[REL]", "[SEP]"]), 
-        ("microsoft/deberta-v3-small", True, "first_last", 768, ["[REL]", "[SEP]"])                   
+        ("microsoft/deberta-v3-small", True, "last", 768, ["[REL]", "[SEP]"]),
+        ("microsoft/deberta-v3-small", True, "first_last", 768, ["[REL]", "[SEP]"])
     ],
 )
 def test_token_rep_layer_shapes_and_mask(
@@ -54,7 +53,7 @@ def test_token_rep_layer_shapes_and_mask(
     # Check shape of mask: (batch_size, max_length)
     assert mask.shape == (len(tokens_batch), max(lengths)), "Mask shape mismatch."
 
-    # Quick check that the mask is correct: 
+    # Quick check that the mask is correct:
     # For example, for lengths=[2,4], the mask might be:
     #  tensor([[1,1,0,0],
     #          [1,1,1,1]])
@@ -68,10 +67,11 @@ def test_token_rep_layer_shapes_and_mask(
         mask.cpu(), expected_mask, msg="Mask does not match expected positions of real vs. padded tokens."
     )
 
+
 def test_token_rep_layer_projection():
 
     model_name = "microsoft/deberta-v3-small"
-    new_hidden_size = 300  # something different than BERT's default
+    new_hidden_size = 300  # something different than default
     token_rep = TokenRepLayer(
         model_name=model_name,
         fine_tune=False,
@@ -89,8 +89,9 @@ def test_token_rep_layer_projection():
     lengths = torch.tensor([1, 3])
     output = token_rep(tokens_batch, lengths)
     emb = output["embeddings"]
-    # check last dimension is new_hidden_size
+    # Check last dimension is new_hidden_size
     assert emb.shape[-1] == new_hidden_size, "Embedding last dimension should match the projection size."
+
 
 def test_token_rep_layer_no_projection():
 
@@ -103,6 +104,7 @@ def test_token_rep_layer_no_projection():
         add_tokens=[]
     )
     assert not hasattr(token_rep, "projection"), "Should NOT have a projection layer if hidden_size == BERT hidden size."
+
 
 def test_token_rep_layer_empty_input():
 
@@ -121,6 +123,7 @@ def test_token_rep_layer_empty_input():
     # We assert that a RuntimeError occurs when the input is empty
     with pytest.raises(RuntimeError, match="received an empty list of sequences"):
         token_rep(tokens_batch, lengths)
+
 
 def test_token_rep_layer_single_token_inputs():
 
@@ -152,6 +155,7 @@ def test_token_rep_layer_single_token_inputs():
     # all mask entries should be 1 since length=1 for each
     assert torch.all(mask == 1)
 
+
 def test_added_tokens_vocabulary():
 
     model_name = "microsoft/deberta-v3-small"
@@ -168,9 +172,10 @@ def test_added_tokens_vocabulary():
     for t in add_tokens:
         assert t in tokenizer.get_vocab(), f"Token {t} was not added to the vocabulary."
 
+
 @pytest.mark.parametrize("subtoken_pooling", ["first", "last", "mean", "first_last"])
 def test_subtoken_pooling_variations(subtoken_pooling):
-    
+
     model_name = "microsoft/deberta-v3-small"
     token_rep = TokenRepLayer(
         model_name=model_name,
@@ -195,7 +200,3 @@ def test_subtoken_pooling_variations(subtoken_pooling):
     assert emb.shape[1] == 3, "Max length dimension mismatch."
     assert emb.shape[2] == 768, "Embedding dimension mismatch for BERT base."
     assert mask.shape == (2, 3)
-
-
-
-

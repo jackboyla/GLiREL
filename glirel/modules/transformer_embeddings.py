@@ -1,14 +1,7 @@
 import torch
 import torch.nn as nn
 from transformers import AutoTokenizer, AutoModel
-from torch.nn.utils.rnn import pad_sequence
 
-from typing import List
-
-
-########################################################################
-# Replicates Flair’s logic
-########################################################################
 
 def fill_masked_elements(all_token_embeddings, hidden_states, mask, word_ids, lengths):
     """
@@ -53,7 +46,7 @@ def fill_mean_token_embeddings(all_token_embeddings, hidden_states, word_ids, to
     For 'mean' subtoken pooling: sum all subtoken embeddings for each token ID
     and divide by the subtoken count.
     """
-    bsz, max_tokens, emb_dim = all_token_embeddings.shape
+    _, max_tokens, emb_dim = all_token_embeddings.shape
     # mask to ignore special tokens (CLS, SEP, or None)
     mask = (word_ids >= 0)
 
@@ -87,16 +80,17 @@ def fill_mean_token_embeddings(all_token_embeddings, hidden_states, word_ids, to
 
     return all_token_embeddings
 
+
 class CustomTransformerWordEmbeddings(nn.Module):
     """
-    A drop-in replacement for Flair's `TransformerWordEmbeddings`:
+    A drop-in replacement for flair's `TransformerWordEmbeddings`:
     """
     def __init__(self, model_name: str, fine_tune: bool, subtoken_pooling: str, allow_long_sentences: bool = True):
         """
         :param model_name: Hugging Face model ID or path
         :param fine_tune: Whether to keep the model parameters trainable
         :param subtoken_pooling: 'first', 'last', 'mean', or 'first_last'
-        :param allow_long_sentences: If True, we won't chunk or break up long inputs
+        :param allow_long_sentences: Whether to truncate long sentences
         """
         super().__init__()
         self.name = f"CustomTransformerWordEmbeddings({model_name})"
@@ -121,8 +115,6 @@ class CustomTransformerWordEmbeddings(nn.Module):
         else:
             self._embedding_length = hidden_size
 
-        # We'll store embeddings under this `self.name`
-
     @property
     def embedding_length(self) -> int:
         return self._embedding_length
@@ -144,7 +136,7 @@ class CustomTransformerWordEmbeddings(nn.Module):
             # s.tokens is a list of tokens, each with .text
             batch_of_lists.append([t.text for t in s.tokens])
 
-        # Tokenize using HF
+        # Tokenize
         encoding = self.tokenizer(
             batch_of_lists,
             is_split_into_words=True,
@@ -207,24 +199,23 @@ class CustomTransformerWordEmbeddings(nn.Module):
         )
 
         # Subtoken pooling
+        true_tensor = torch.ones((batch_size, 1), dtype=torch.bool, device=device)
+
         if self.subtoken_pooling == "first":
             # 'first' subtoken => mask out the beginning of each word
             gain_mask = (word_ids_tensor[:, 1:] != word_ids_tensor[:, :-1])
             # first position is always True
-            true_tensor = torch.ones((batch_size, 1), dtype=torch.bool, device=device)
             first_mask = torch.cat([true_tensor, gain_mask], dim=1)
             fill_masked_elements(all_token_embeddings, last_hidden, first_mask, word_ids_tensor, token_lengths_tensor)
 
         elif self.subtoken_pooling == "last":
             # 'last' subtoken => mask out the boundary at the next subtoken
             gain_mask = (word_ids_tensor[:, 1:] != word_ids_tensor[:, :-1])
-            true_end = torch.ones((batch_size, 1), dtype=torch.bool, device=device)
-            last_mask = torch.cat([gain_mask, true_end], dim=1)
+            last_mask = torch.cat([gain_mask, true_tensor], dim=1)
             fill_masked_elements(all_token_embeddings, last_hidden, last_mask, word_ids_tensor, token_lengths_tensor)
 
         elif self.subtoken_pooling == "first_last":
             gain_mask = word_ids_tensor[:, 1:] != word_ids_tensor[:, :-1]
-            true_tensor = torch.ones((batch_size, 1), dtype=torch.bool, device=device)
             first_mask = torch.cat([true_tensor, gain_mask], dim=1)
             last_mask = torch.cat([gain_mask, true_tensor], dim=1)
 
@@ -262,77 +253,3 @@ class CustomTransformerWordEmbeddings(nn.Module):
 
     def __str__(self):
         return self.name
-
-class ModifiedTokenRepLayer(nn.Module):
-    def __init__(self, model_name: str, fine_tune: bool, subtoken_pooling: str,
-                 hidden_size: int, add_tokens: List[str]):
-        super().__init__()
-
-        self.bert_layer = CustomTransformerWordEmbeddings(
-            model_name,
-            fine_tune=fine_tune,
-            subtoken_pooling=subtoken_pooling,
-            allow_long_sentences=True
-        )
-        
-        # Flair’s code automatically inserts "[FLERT]" if use_context_separator=True that is the default
-        # Adding also it here to replicate the same behavior
-        if "[FLERT]" not in self.bert_layer.tokenizer.get_vocab():
-            self.bert_layer.tokenizer.add_special_tokens({"additional_special_tokens": ["[FLERT]"]})
-
-        # Add tokens to vocabulary
-        if add_tokens:
-            self.bert_layer.tokenizer.add_tokens(add_tokens)
-
-        # Resize token embeddings
-        self.bert_layer.model.resize_token_embeddings(len(self.bert_layer.tokenizer))
-
-        bert_hidden_size = self.bert_layer.embedding_length
-
-        if hidden_size != bert_hidden_size:
-            torch.manual_seed(42)
-            self.projection = nn.Linear(bert_hidden_size, hidden_size)
-
-    def forward(self, tokens: List[List[str]], lengths: torch.Tensor):
-        token_embeddings = self.compute_word_embedding(tokens)
-
-        if hasattr(self, "projection"):
-            token_embeddings = self.projection(token_embeddings)
-
-        B = len(lengths)
-        max_length = lengths.max()
-        mask = (torch.arange(max_length).view(1, -1).repeat(B, 1)
-                < lengths.cpu().unsqueeze(1)).to(token_embeddings.device).long()
-
-        return {"embeddings": token_embeddings, "mask": mask}
-
-    def compute_word_embedding(self, tokens):
-        # sentences = [Sentence(i) for i in tokens]
-        # self.bert_layer.embed(sentences)
-        # we just replicate that approach, but we need minimal "Sentence" and "Token" classes:
-
-        sentences = [MinimalSentence(toks) for toks in tokens]   # see definition below
-        #sentences = [Sentence(i) for i in tokens]
-        self.bert_layer.embed(sentences)
-        # gather embeddings
-        token_embeddings = pad_sequence(
-            [torch.stack([tok.get_embedding(self.bert_layer.name) for tok in s.tokens])
-             for s in sentences],
-            batch_first=True
-        )
-        return token_embeddings
-
-class MinimalToken:
-    def __init__(self, text: str):
-        self.text = text
-        self._embeddings = {}
-
-    def set_embedding(self, name: str, vector: torch.Tensor):
-        self._embeddings[name] = vector
-
-    def get_embedding(self, name: str) -> torch.Tensor:
-        return self._embeddings[name]
-
-class MinimalSentence:
-    def __init__(self, list_of_words: List[str]):
-        self.tokens = [MinimalToken(w) for w in list_of_words]

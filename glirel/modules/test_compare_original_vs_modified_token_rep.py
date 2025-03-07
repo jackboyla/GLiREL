@@ -1,29 +1,13 @@
 import pytest
 import torch
-from typing import List
 
-from glirel.modules.token_rep import TokenRepLayer as OriginalTokenRepLayer
-from glirel.modules.modified_token_rep import ModifiedTokenRepLayer
+from glirel.modules.deprecated_token_rep import TokenRepLayer as OriginalTokenRepLayer
+from glirel.modules.token_rep import TokenRepLayer
 
-import numpy as np
-import random
-
-def set_seed(seed: int = 42):
-
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-set_seed(42)
 
 @pytest.mark.parametrize(
     "model_name,fine_tune,subtoken_pooling,hidden_size,add_tokens",
     [
-        # A few examples. You can reuse your entire parameter set if you want:
         ("microsoft/deberta-v3-small", False, "first", 768, []),
         ("microsoft/deberta-v3-small", True,  "mean", 768, ["[REL]", "[SEP]"]),
         ("microsoft/deberta-v3-small", False,  "last", 768, ["[REL]", "[SEP]"]),
@@ -31,15 +15,15 @@ set_seed(42)
         ("microsoft/deberta-v3-large", True, "first", 1024, []),
         ("microsoft/deberta-v3-large", True, "first", 768, []),
         ("microsoft/deberta-v3-small", False, "first", 256, []),
-        ("microsoft/deberta-v3-small", False, "first", 128, []),   
+        ("microsoft/deberta-v3-small", False, "first", 128, []),
     ],
 )
 def test_compare_original_and_modified(
     model_name, fine_tune, subtoken_pooling, hidden_size, add_tokens
 ):
     """
-    Compare the output of the old (Flair-based) TokenRepLayer vs. 
-    the new ModifiedTokenRepLayer for the same inputs.
+    Compare the output of the old (Flair-based) TokenRepLayer vs.
+    the new TokenRepLayer for the same inputs.
     """
 
     # Instantiate both classes
@@ -50,7 +34,7 @@ def test_compare_original_and_modified(
         hidden_size=hidden_size,
         add_tokens=add_tokens,
     )
-    new_layer = ModifiedTokenRepLayer(
+    new_layer = TokenRepLayer(
         model_name=model_name,
         fine_tune=fine_tune,
         subtoken_pooling=subtoken_pooling,
@@ -101,10 +85,10 @@ def test_compare_original_and_modified(
         msg="Mask differs between original and modified versions!"
     )
 
+
 def test_compare_with_single_token_inputs():
     model_name = "microsoft/deberta-v3-small"
     hidden_size = 768
-    # The same config for both
     original_layer = OriginalTokenRepLayer(
         model_name=model_name,
         fine_tune=False,
@@ -112,7 +96,7 @@ def test_compare_with_single_token_inputs():
         hidden_size=hidden_size,
         add_tokens=[]
     )
-    new_layer = ModifiedTokenRepLayer(
+    new_layer = TokenRepLayer(
         model_name=model_name,
         fine_tune=False,
         subtoken_pooling="first",
@@ -155,7 +139,7 @@ def test_compare_with_custom_tokens():
         hidden_size=hidden_size,
         add_tokens=add_tokens
     )
-    new_layer = ModifiedTokenRepLayer(
+    new_layer = TokenRepLayer(
         model_name=model_name,
         fine_tune=False,
         subtoken_pooling="first",
@@ -179,4 +163,36 @@ def test_compare_with_custom_tokens():
     )
     torch.testing.assert_close(
         orig_out["mask"], new_out["mask"], rtol=1e-5, atol=1e-5
+    )
+
+
+def test_long_sequence():
+    model_name = "microsoft/deberta-v3-small"
+    hidden_size = 768
+
+    original_layer = OriginalTokenRepLayer(
+        model_name=model_name,
+        fine_tune=False,
+        subtoken_pooling="first_last",
+        hidden_size=hidden_size,
+        add_tokens=[]
+    )
+    new_layer = TokenRepLayer(
+        model_name=model_name,
+        fine_tune=False,
+        subtoken_pooling="first_last",
+        hidden_size=hidden_size,
+        add_tokens=[]
+    )
+
+    # Make a sequence of 1024 tokens
+    tokens_batch = [["Token"] * 1024]
+    lengths = torch.tensor([1024])
+
+    with torch.no_grad():
+        orig_out = original_layer(tokens_batch, lengths)
+        new_out = new_layer(tokens_batch, lengths)
+
+    torch.testing.assert_close(
+        orig_out["embeddings"], new_out["embeddings"], rtol=1e-5, atol=1e-5
     )
