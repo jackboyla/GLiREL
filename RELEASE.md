@@ -120,36 +120,7 @@ python -m pip install torch transformers huggingface_hub flair seqeval tqdm
 python -m pip install -i https://test.pypi.org/simple/ glirel
 ```
 
-If everything works, you should be able to run this code:
-
-```python
-from glirel import GLiREL
-import spacy
-
-model = GLiREL.from_pretrained("jackboyla/glirel_base")
-
-text = "Jack Dorsey's father, Tim Dorsey, is a licensed pilot. Jack met his wife Sarah Paulson in New York in 2003. They have one son, Edward."
-
-nlp = spacy.load('en_core_web_sm')
-doc = nlp(text)
-
-labels = ['country of origin', 'licensed to broadcast to', 'parent', 'followed by', 'located in or next to body of water', 'spouse', 'child']
-
-tokens = [token.text for token in doc]
-
-ner = [[ent.start, ent.end, ent.label_, ent.text] for ent in doc.ents]
-print(f"Entities detected: {ner}")
-
-relations = model.predict_relations(tokens, labels, threshold=0.01, ner=ner)
-
-print('Number of relations:', len(relations))
-
-sorted_data_desc = sorted(relations, key=lambda x: x['score'], reverse=True)
-print("\nDescending Order by Score:")
-for item in sorted_data_desc:
-    print(f"{item['head_text']} --> {item['label']} --> {item['tail_text']} | socre: {item['score']}")
-
-```
+If everything works, you should be able to run the quickstart code in the [README](./README.md)
 
 ### Step 7: Publish on PyPI
 
