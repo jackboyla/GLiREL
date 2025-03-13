@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from torch.nn.utils.rnn import pad_sequence
 
-from glirel.modules.transformer_embeddings import CustomTransformerWordEmbeddings
+from glirel.modules.transformer_embeddings import TransformerWordEmbeddings
 
 
 class MinimalToken:
@@ -32,7 +32,7 @@ class TokenRepLayer(nn.Module):
                  hidden_size: int, add_tokens: List[str]):
         super().__init__()
 
-        self.bert_layer = CustomTransformerWordEmbeddings(
+        self.bert_layer = TransformerWordEmbeddings(
             model_name,
             fine_tune=fine_tune,
             subtoken_pooling=subtoken_pooling,
@@ -54,7 +54,6 @@ class TokenRepLayer(nn.Module):
         bert_hidden_size = self.bert_layer.embedding_length
 
         if hidden_size != bert_hidden_size:
-            torch.manual_seed(42) # To be able to compare with the original TokenRep
             self.projection = nn.Linear(bert_hidden_size, hidden_size)
 
     def forward(self, tokens: List[List[str]], lengths: torch.Tensor):

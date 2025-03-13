@@ -2,7 +2,7 @@ import pytest
 import torch
 
 from glirel.modules.transformer_embeddings import (
-    CustomTransformerWordEmbeddings,
+    TransformerWordEmbeddings,
     fill_masked_elements,
     fill_mean_token_embeddings,
     insert_missing_embeddings
@@ -134,7 +134,7 @@ def test_fill_mean_token_embeddings():
 @pytest.mark.parametrize("subtoken_pooling", ["first", "last", "mean", "first_last"])
 def test_custom_embedding_subtoken_pooling(subtoken_pooling):
     model_name = "microsoft/deberta-v3-small"
-    custom_emb = CustomTransformerWordEmbeddings(
+    custom_emb = TransformerWordEmbeddings(
         model_name=model_name,
         fine_tune=False,
         subtoken_pooling=subtoken_pooling,
@@ -158,7 +158,7 @@ def test_custom_embedding_fine_tune():
     Check that if fine_tune=False, requires_grad is False for all parameters
     """
     model_name = "microsoft/deberta-v3-small"
-    custom_emb = CustomTransformerWordEmbeddings(
+    custom_emb = TransformerWordEmbeddings(
         model_name=model_name,
         fine_tune=False,
         subtoken_pooling="first"
@@ -168,7 +168,7 @@ def test_custom_embedding_fine_tune():
         assert not p.requires_grad
 
     # If we set fine_tune=True, param should be True
-    custom_emb2 = CustomTransformerWordEmbeddings(
+    custom_emb2 = TransformerWordEmbeddings(
         model_name=model_name,
         fine_tune=True,
         subtoken_pooling="first"
@@ -183,7 +183,7 @@ def test_custom_embedding_empty_sentences():
     If user passes empty list to embed, no error should occur
     """
     model_name = "microsoft/deberta-v3-small"
-    custom_emb = CustomTransformerWordEmbeddings(
+    custom_emb = TransformerWordEmbeddings(
         model_name=model_name,
         fine_tune=False,
         subtoken_pooling="first"
@@ -197,7 +197,7 @@ def test_custom_token():
     in the embedding matrix dimension and at runtime.
     """
     model_name = "microsoft/deberta-v3-small"
-    custom_emb = CustomTransformerWordEmbeddings(
+    custom_emb = TransformerWordEmbeddings(
         model_name=model_name,
         fine_tune=False,
         subtoken_pooling="first"

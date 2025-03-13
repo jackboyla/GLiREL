@@ -81,7 +81,7 @@ def fill_mean_token_embeddings(all_token_embeddings, hidden_states, word_ids, to
     return all_token_embeddings
 
 
-class CustomTransformerWordEmbeddings(nn.Module):
+class TransformerWordEmbeddings(nn.Module):
     """
     A drop-in replacement for flair's `TransformerWordEmbeddings`:
     """
@@ -93,7 +93,7 @@ class CustomTransformerWordEmbeddings(nn.Module):
         :param allow_long_sentences: Whether to truncate long sentences
         """
         super().__init__()
-        self.name = f"CustomTransformerWordEmbeddings({model_name})"
+        self.name = f"TransformerWordEmbeddings({model_name})"
         self.model_name = model_name
         self.fine_tune = fine_tune
         self.subtoken_pooling = subtoken_pooling
