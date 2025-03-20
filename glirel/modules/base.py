@@ -118,7 +118,7 @@ class InstructBase(nn.Module):
         super().__init__()
         self.max_width = config.max_width
         self.base_config = config
-        self.base_config.coreference_label = getattr(config, "coreference_label", "SELF")  # NOTE: this label is given a special index to denote coreference (i.e -2)
+        self.base_config.coreference_label = getattr(config, "coreference_label", None)  # NOTE: this label is given a special index to denote coreference (i.e -2)
         self.max_entity_pair_distance = config.max_entity_pair_distance
         self.device = torch.device(getattr(config, "device", "cuda" if torch.cuda.is_available() else "cpu"))
 
@@ -307,7 +307,8 @@ class InstructBase(nn.Module):
                     types = sorted(b["label"])
 
                 class_to_id = {k: v for v, k in enumerate(types, start=1)}
-                class_to_id = _substitute_coref_label(self.base_config.coreference_label, class_to_id)
+                if hasattr(self.base_config, "coreference_label"):
+                    class_to_id = _substitute_coref_label(self.base_config.coreference_label, class_to_id)
                 id_to_class = {k: v for v, k in class_to_id.items()}
                 class_to_ids.append(class_to_id)
                 id_to_classes.append(id_to_class)
