@@ -144,37 +144,22 @@ class TransformerWordEmbeddings(nn.Module):
             padding=True,
             truncation=not self.allow_long_sentences
         )
-        input_ids = encoding['input_ids']
-        attention_mask = encoding['attention_mask']
-        device = next(self.model.parameters()).device  # move to same device as model
-        input_ids = input_ids.to(device)
-        attention_mask = attention_mask.to(device)
+        device = next(self.model.parameters()).device
+        input_ids = encoding['input_ids'].to(device)
+        attention_mask = encoding['attention_mask'].to(device)
 
         # Forward pass
         outputs = self.model(input_ids, attention_mask=attention_mask, return_dict=True)
         # shape = [batch_size, seq_len, hidden_dim]
         last_hidden = outputs.last_hidden_state
-
         batch_size, seq_len, hidden_dim = last_hidden.shape
 
-        # Reconstruct which subtoken belongs to which token
-        # word_ids(i) => a list of length seq_len with an integer or None
+        # Build a word_ids tensor
         word_ids_batch = []
-        max_token_count = 0
         for i in range(batch_size):
             w_ids = encoding.word_ids(batch_index=i)
             if w_ids is None:
-                # fallback (slow tokenizer) => all None
                 w_ids = [None]*seq_len
-            # figure out how many tokens are in that sample
-            valid_ids = [x for x in w_ids if x is not None]
-            if valid_ids:
-                max_id = max(valid_ids)
-                token_count = max_id + 1
-            else:
-                token_count = 0
-            if token_count > max_token_count:
-                max_token_count = token_count
             word_ids_batch.append(w_ids)
 
         # Build a [batch_size, seq_len] tensor of token IDs, or -100 if None
@@ -184,21 +169,22 @@ class TransformerWordEmbeddings(nn.Module):
                 if w_id is not None:
                     word_ids_tensor[i, j] = w_id
 
-        # Token lengths per sentence
+        # Figure out how many subtoken-aligned tokens each sample has
         token_lengths = []
         for i in range(batch_size):
-            valid = [x for x in word_ids_batch[i] if x is not None]
-            token_lengths.append((max(valid)+1) if valid else 0)
+            token_count = len(sentences[i].tokens)
+            token_lengths.append(token_count)
         token_lengths_tensor = torch.tensor(token_lengths, device=device, dtype=torch.long)
 
         # Prepare final [batch_size, max_token_count, embedding_dim]
+        max_token_count = max(token_lengths)
         embed_dim = self.embedding_length
         all_token_embeddings = torch.zeros(
             (batch_size, max_token_count, embed_dim),
             device=device, dtype=last_hidden.dtype
         )
 
-        # Subtoken pooling
+        # Subtoken pooling - mirror flair https://github.com/flairNLP/flair/blob/master/flair/embeddings/transformer.py#L1490
         true_tensor = torch.ones((batch_size, 1), dtype=torch.bool, device=device)
 
         if self.subtoken_pooling == "first":
