@@ -123,7 +123,7 @@ python -m pip install torch transformers huggingface_hub flair seqeval tqdm
 python -m pip install --force-reinstall --no-deps -i https://test.pypi.org/simple/ glirel 
 ```
 
-If everything works, you should be able to run the quickstart code in the [README](./README.md)
+If everything works, you should be able to run the quickstart code in [quickstart.py](./quickstart.py)
 
 ### Step 7: Publish on PyPI
 
