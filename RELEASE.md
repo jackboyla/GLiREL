@@ -117,7 +117,10 @@ Once that has uploaded the package, in a fresh environment containing all depend
 
 ```bash
 python -m pip install torch transformers huggingface_hub flair seqeval tqdm
-python -m pip install -i https://test.pypi.org/simple/ glirel
+```
+
+```bash
+python -m pip install --force-reinstall --no-deps -i https://test.pypi.org/simple/ glirel 
 ```
 
 If everything works, you should be able to run the quickstart code in the [README](./README.md)
