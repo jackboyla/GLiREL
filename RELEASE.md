@@ -1,5 +1,7 @@
 # A guide to making a release
 
+Credit to @tomaarsen for creating [this doc in GLiNER](https://github.com/urchade/GLiNER/blob/main/RELEASE.md) 
+
 This guide collects the steps we do in GLiREL to make a release on PyPI. They result from (variations of) hard-learned lessons and while following this guide is completely optional, it’s strongly recommended to do so. 🙂 This is a truncated version of the [SetFit](https://github.com/huggingface/setfit/blob/main/RELEASE.md) release guide, which is more exhaustive and does some additional steps.
 
 ### Preparation
@@ -143,4 +145,9 @@ Go back to the draft you did at step 4 ([https://github.com/jackboyla/GLiREL/rel
 
 ### Step 9: Bump the dev version on the main branch
 
-You’re almost done! Just go back to the `main` branch and change the dev version in [`glirel/__init__.py`](glirel/__init__.py) to the new version you’re developing, for instance `4.13.0.dev` if just released `4.12.0`.
+You’re almost done! Just go back to the `main` branch and change the dev version in [`glirel/__init__.py`](glirel/__init__.py) to the new version you’re developing, for instance `4.13.0.dev` if just released `4.12.0`:
+
+```diff
+- __version__ = "4.12.0"
++ __version__ = "4.13.0.dev"
+```
