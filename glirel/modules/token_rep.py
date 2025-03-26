@@ -69,7 +69,7 @@ class TokenRepLayer(nn.Module):
 
         return {"embeddings": token_embeddings, "mask": mask}
 
-    def compute_word_embedding(self, tokens):
+    def compute_word_embedding(self, tokens: List[List[str]]):
         sentences = [MinimalSentence(toks) for toks in tokens]
         """
         sentences[0]
