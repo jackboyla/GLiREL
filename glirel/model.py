@@ -256,7 +256,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         
         # similarity score
         scores = self.scorer(rel_rep, rel_type_rep) # ([B, num_pairs, num_classes])
-        bias = self.threshold_bias(rel_type_rep)
+        bias = self.threshold_bias(rel_rep)
         scores = scores - bias
 
         return scores, num_classes, rel_type_mask, coref_scores  # ([B, num_pairs, num_classes]), num_classes, ([B, num_classes]), ([B, num_pairs, 1])
