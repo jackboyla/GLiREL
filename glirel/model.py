@@ -147,8 +147,10 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         all_len_prompt = []
         num_classes_all = []
 
+        batch_size = x['seq_length'].size(0)
+
         # add prompt to the tokens
-        for i in range(len(x['tokens'])):
+        for i in range(batch_size):
             all_types_i = list(x['classes_to_id'][i].keys())
             # multiple entity types in all_types. Prompt is appended at the start of tokens
             entity_prompt = []
@@ -191,7 +193,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         word_rep = []      # word representation (after [SEP])
         mask = []          # mask (after [SEP])
         rel_type_rep = []  # relation type representation (before [SEP])
-        for i in range(len(x['tokens'])):
+        for i in range(batch_size):
             prompt_entity_length = all_len_prompt[i]  # length of prompt for this example
             # get word representation (after [SEP])
             word_rep.append(word_rep_w_prompt[i, prompt_entity_length:prompt_entity_length + x['seq_length'][i]])
