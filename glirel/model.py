@@ -109,6 +109,8 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         # scoring layer
         self.scorer = ScorerLayer(config.scorer, hidden_size=config.hidden_size, dropout=config.dropout)
 
+        self.threshold_bias = nn.Linear(config.hidden_size, 1)
+
 
     def get_optimizer(self, lr_encoder, lr_others, freeze_token_rep=False):
         """
@@ -123,7 +125,8 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
             {'params': self.span_rep_layer.parameters(), 'lr': lr_others},
             {'params': self.prompt_rep_layer.parameters(), 'lr': lr_others},
             {"params": self._rel_filtering.parameters(), "lr": lr_others},
-            {'params': self.scorer.parameters(), 'lr': lr_others}
+            {'params': self.scorer.parameters(), 'lr': lr_others},
+            {'params': self.threshold_bias.parameters(), 'lr': lr_others}
         ]
 
         if not freeze_token_rep:
@@ -253,6 +256,8 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         
         # similarity score
         scores = self.scorer(rel_rep, rel_type_rep) # ([B, num_pairs, num_classes])
+        bias = self.threshold_bias(rel_type_rep)
+        scores = scores - bias
 
         return scores, num_classes, rel_type_mask, coref_scores  # ([B, num_pairs, num_classes]), num_classes, ([B, num_classes]), ([B, num_pairs, 1])
 
