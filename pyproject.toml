@@ -26,10 +26,7 @@ keywords = [
 ]
 authors = [
     {name = "Jack Boylan"},
-    {name = "Urchade Zaratiana"},
-    {name = "Nadi Tomeh"},
-    {name = "Pierre Holat"},
-    {name = "Thierry Charnois"},
+    {name = "Urchade Zaratiana"}
 ]
 maintainers = [
     {name = "Jack Boylan"},
@@ -38,7 +35,6 @@ dependencies = [
     "torch",
     "transformers",
     "huggingface_hub",
-    "flair",
     "seqeval",
     "tqdm",
     "datasets",
