@@ -307,7 +307,7 @@ class InstructBase(nn.Module):
                     types = sorted(b["label"])
 
                 class_to_id = {k: v for v, k in enumerate(types, start=1)}
-                if hasattr(self.base_config, "coreference_label"):
+                if self.base_config.coreference_label is not None:
                     class_to_id = _substitute_coref_label(self.base_config.coreference_label, class_to_id)
                 id_to_class = {k: v for v, k in class_to_id.items()}
                 class_to_ids.append(class_to_id)
