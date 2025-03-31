@@ -6,12 +6,8 @@ from torch import nn
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 import random
-import os
-import logging
 from copy import copy, deepcopy
-
-
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 def insert_entity_markers(tokens, span_idx, relations, entity_start_token, entity_end_token):
     """
