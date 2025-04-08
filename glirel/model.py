@@ -356,20 +356,12 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
     def predict(self, x, flat_ner=False, threshold: list | float = 0.5, ner=None):
         self.eval()
         
-        # start_time = time.time()
-        
         local_scores, num_classes, rel_type_mask, coref_scores = self.compute_score(x)
-        
-        # forward_pass_time = time.time() - start_time
-        # logger.info(f"[Optimized Predict] Time taken for forward pass: {forward_pass_time:.4f} seconds")
 
         if isinstance(threshold, float):
             threshold = [threshold]
         
         probabilities = torch.sigmoid(local_scores)  # Shape: [batch_size, num_pairs, num_classes]
-        
-        # Start timing thresholding without synchronization
-        # start = time.time()
         
         # Build a global mapping from class names to IDs
         all_class_names = set()
@@ -401,8 +393,6 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
             num_pairs = relations_idx.shape[0]
             padded_relations_idx[idx, :num_pairs, ...] = relations_idx.to(probabilities.device)
 
-        # logger.info(f"## Max Number of entity pairs: {max_num_pairs}")
-        # logger.info(f"## Max Number of classes: {max_num_classes}")
 
         # Initialize the dictionary to store results per threshold
         rels_per_threshold = {}
@@ -474,10 +464,6 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
                 rels[i].append((entity_pair, relation_type, score))
 
             rels_per_threshold[thresh] = rels
-
-
-        # thresholding_time = time.time() - start
-        # logger.info(f"[Optimized Predict] Time taken for thresholding: {thresholding_time:.4f} seconds")
         
         return rels_per_threshold if len(threshold) > 1 else rels_per_threshold[threshold[0]]
 
