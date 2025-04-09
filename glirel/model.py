@@ -347,16 +347,35 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
                 coref_loss = self.compute_coref_loss(coref_scores[valid_mask], coref_ground_truth[valid_mask])
                 coref_loss = self.config.coref_loss_weight * coref_loss
                 total_loss += coref_loss
-                return {'total_loss': total_loss, 'coref_loss': coref_loss, 'rel_loss': rel_loss}
+                loss_dict = {'total_loss': total_loss, 'coref_loss': coref_loss, 'rel_loss': rel_loss}
 
-        return {'total_loss': total_loss} # total_loss is rel_loss if no coref_classifier
+        loss_dict = {'total_loss': total_loss} # total_loss is rel_loss if no coref_classifier
+        output = {
+            "scores": scores, 
+            "num_classes": num_classes, 
+            "rel_type_mask": rel_type_mask, 
+            "coref_scores": coref_scores,
+        }
+        output.update(loss_dict)
+        return output
     
 
     @torch.no_grad()
-    def predict(self, x, flat_ner=False, threshold: list | float = 0.5, ner=None):
+    def predict(self, x, flat_ner=False, threshold: list | float = 0.5, ner=None, return_loss: bool = False):
         self.eval()
-        
-        local_scores, num_classes, rel_type_mask, coref_scores = self.compute_score(x)
+        # If loss is requested, compute it by running the forward pass
+        loss_dict = None
+        if return_loss:
+            assert (None in x['relations']) is False, "'relations' is incomplete in provided batch. To compute loss, 'relations' must be populated in the input dictionary."
+            output = self.forward(x)
+            local_scores, num_classes, rel_type_mask, coref_scores = output["scores"], output["num_classes"], output["rel_type_mask"], output["coref_scores"]
+            loss_dict = {
+                'total_loss': output['total_loss'],
+                'coref_loss': output.get('coref_loss', None),
+                'rel_loss': output.get('rel_loss', None),
+            }
+        else:
+            local_scores, num_classes, rel_type_mask, coref_scores = self.compute_score(x)
 
         if isinstance(threshold, float):
             threshold = [threshold]
@@ -397,7 +416,6 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         # Initialize the dictionary to store results per threshold
         rels_per_threshold = {}
         for thresh in threshold:
-            # Apply threshold
             triggered_relations = probabilities > thresh  # Shape: [batch_size, num_pairs, num_classes]
 
             # Build a mask for valid class indices
@@ -413,7 +431,6 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
                 rels_per_threshold[thresh] = rels
                 continue
 
-            # Get scores
             scores = probabilities[batch_indices, pair_indices, class_indices]
             
             # Map class indices to actual class IDs
@@ -431,9 +448,7 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
                 rels_per_threshold[thresh] = rels
                 continue
 
-            # Get corresponding entity pairs
-            entity_pairs = padded_relations_idx[batch_indices, pair_indices]  # Shape: [num_relations, ...]
-
+            entity_pairs = padded_relations_idx[batch_indices, pair_indices]
             # Build a mask for valid entity pairs (entity_pair does not contain -1)
             valid_entity_mask = (entity_pairs != -1).all(dim=tuple(range(1, entity_pairs.dim())))
             batch_indices = batch_indices[valid_entity_mask]
@@ -447,7 +462,6 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
                 rels_per_threshold[thresh] = rels
                 continue
 
-            # Convert class IDs to class names
             class_ids_cpu = class_ids.cpu()
             relation_types = [id_to_class_name[class_id.item()] for class_id in class_ids_cpu]
 
@@ -464,31 +478,48 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
                 rels[i].append((entity_pair, relation_type, score))
 
             rels_per_threshold[thresh] = rels
-        
-        return rels_per_threshold if len(threshold) > 1 else rels_per_threshold[threshold[0]]
+
+        if len(threshold) > 1:
+            preds = rels_per_threshold
+        else: 
+            preds = rels_per_threshold[threshold[0]]
+
+        if return_loss:
+            return {"predictions": preds, "loss": loss_dict}
+        else:
+            return preds
 
 
+    def predict_relations(self, text, labels, flat_ner=True, threshold=0.5, ner=None, ground_truth_relations=None, top_k=-1):
+        output = self.batch_predict_relations([text], labels, flat_ner=flat_ner, threshold=threshold, ner=[ner], ground_truth_relations=[ground_truth_relations], top_k=top_k)
+        if isinstance(output, list):
+            return output[0]
+        else:
+            return output['predictions'][0], output['loss']
 
-    def predict_relations(self, text, labels, flat_ner=True, threshold=0.5, ner=None, top_k=-1):
-        return self.batch_predict_relations([text], labels, flat_ner=flat_ner, threshold=threshold, ner=[ner], top_k=top_k)[0]
-
-    def batch_predict_relations(self, texts, labels, flat_ner=True, threshold=0.5, ner=None, top_k=-1):
+    def batch_predict_relations(
+        self, 
+        texts, 
+        labels, 
+        flat_ner=True, 
+        threshold=0.5, 
+        ner=None, 
+        ground_truth_relations=None, 
+        top_k=-1
+    ):
         """
         Predict relations for a batch of texts.
-        texts:  List of texts | List[str]
-        labels: List of labels | List[str]
-        ...
         """
-
         all_tokens = []
         all_start_token_idx_to_text_idx = []
         all_end_token_idx_to_text_idx = []
+        return_loss = False
 
         for text in texts:
             tokens = []
             start_token_idx_to_text_idx = []
             end_token_idx_to_text_idx = []
-            if type(text) is str:
+            if isinstance(text, str):
                 for match in re.finditer(r'\w+(?:[-_]\w+)*|\S', text):
                     tokens.append(match.group())
                     start_token_idx_to_text_idx.append(match.start())
@@ -503,16 +534,33 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
         if ner is not None:
             for i, x in enumerate(input_x):
                 x['ner'] = ner[i]
+        if ground_truth_relations and ground_truth_relations[0] is not None:
+            assert len(ground_truth_relations) == len(texts), f"Number of texts ({len(texts)}) and number of ground truth relations ({len(ground_truth_relations)}) do not match."
+            for i, x in enumerate(input_x):
+                x['relations'] = ground_truth_relations[i]
+                ner_positions = [[ent[0], ent[1]] for ent in x['ner']]
+                for relation in x['relations']:
+                    assert relation["head"]["position"] in ner_positions, f"Head position {relation['head']['position']} not found in ner positions {ner_positions}"
+                    assert relation["tail"]["position"] in ner_positions, f"Tail position {relation['tail']['position']} not found in ner positions {ner_positions}"
+            return_loss = True
 
-        x = self.collate_fn(input_x, labels, device=self.device)
-        assert all([l in labels for l in x['classes_to_id'][0].keys()]), f"Labels mismatch after collate function: {labels} != {x['classes_to_id'][0].keys()}. `config.fixed_relation_types` is likely wrong"
-        outputs = self.predict(x, flat_ner=flat_ner, threshold=threshold, ner=ner)
+        x = self.collate_fn(input_x, relation_types=labels, device=self.device)
+        assert all([l in labels for l in x['classes_to_id'][0].keys()]), (
+            f"Labels mismatch after collate function: {labels} != {x['classes_to_id'][0].keys()}. "
+            f"`config.fixed_relation_types` is likely wrong"
+        )
+
+        outputs = self.predict(x, flat_ner=flat_ner, threshold=threshold, ner=ner, return_loss=return_loss)
+        if return_loss:
+            predictions = outputs["predictions"]
+            loss_info = outputs["loss"]
+        else:
+            predictions = outputs
 
         # retrieve top_k predictions (if top_k > -1)
         if top_k > 0:
             top_k_outputs = []
-            for i, output in enumerate(outputs):
-
+            for i, output in enumerate(predictions):
                 # sort output by score
                 output = sorted(output, key=lambda x: x[2], reverse=True)
 
@@ -530,11 +578,13 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
                         position_set[hashable_positions] += 1
 
                 top_k_outputs.append(rels)
-            outputs = top_k_outputs
+            predictions_final = top_k_outputs
+        else:
+            predictions_final = predictions
 
         all_relations = []
 
-        for i, output in enumerate(outputs):
+        for i, output in enumerate(predictions_final):
 
             rels = []
             for (head_pos, tail_pos), pred_label, score in output:
@@ -553,7 +603,10 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
             all_relations.append(rels)
 
-        return all_relations
+        if return_loss:
+            return {"predictions": all_relations, "loss": loss_info}
+        else:
+            return all_relations
 
 
     def evaluate(
