@@ -4,3 +4,4 @@ ipdb
 pytest
 build
 twine
+wandb

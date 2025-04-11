@@ -3,6 +3,6 @@ transformers
 huggingface_hub
 seqeval
 tqdm
-wandb
 scipy==1.10.1
 loguru
+sentencepiece==0.1.98
