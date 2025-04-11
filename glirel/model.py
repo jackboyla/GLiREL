@@ -798,9 +798,6 @@ class GLiREL(InstructBase, PyTorchModelHubMixin):
 
     def to(self, device):
         super().to(device)
-        import flair
-
-        flair.device = device
         self.device = device
         return self
 
